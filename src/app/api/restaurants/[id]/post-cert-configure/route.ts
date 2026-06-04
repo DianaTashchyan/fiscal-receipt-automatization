@@ -224,20 +224,23 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     // ── 4. SRC connection + activation ──────────────────────────────────────
     try {
-      const certConfig = resolveRestaurantCertConfig({
-        id: restaurant.id,
-        tin: restaurant.tin,
-        crn,
-        srcCertData: restaurant.srcCertData,
-        srcCertPassword: restaurant.srcCertPassword,
-        srcCertPath: restaurant.srcCertPath,
-      });
-
-      // We need to import the real client directly when we have a resolved cert config
-      const { RealSrcClient } = await import("@/lib/src/real-client");
-      const client = isMock
-        ? await resolveAdminSrcClient(id)
-        : new RealSrcClient(certConfig);
+      // In mock mode, use the admin resolver (returns MockSrcClient, no cert needed).
+      // In real mode, resolve the restaurant cert and construct the real client directly.
+      let client;
+      if (isMock) {
+        client = await resolveAdminSrcClient(id);
+      } else {
+        const certConfig = resolveRestaurantCertConfig({
+          id: restaurant.id,
+          tin: restaurant.tin,
+          crn,
+          srcCertData: restaurant.srcCertData,
+          srcCertPassword: restaurant.srcCertPassword,
+          srcCertPath: restaurant.srcCertPath,
+        });
+        const { RealSrcClient } = await import("@/lib/src/real-client");
+        client = new RealSrcClient(certConfig);
+      }
 
       // Test connection
       try {
