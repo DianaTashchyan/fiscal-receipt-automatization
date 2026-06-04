@@ -27,8 +27,6 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import forge from "node-forge";
-import { hash } from "bcryptjs";
-import { randomBytes } from "crypto";
 import prisma from "@/lib/prisma/client";
 import { requireRestaurantAccess } from "@/lib/utils/auth";
 import { decryptCertPassword } from "@/lib/src/cert-crypto";
@@ -114,6 +112,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         srcCertData: true,
         srcCertPassword: true,
         srcCertPath: true,
+        srcOnboardingStep: true,
         departments: { where: { isActive: true }, take: 1, select: { id: true, name: true, taxDepartmentId: true, taxRegime: true } },
         cashiers:    { where: { isActive: true }, take: 1, select: { id: true, name: true, taxCashierId: true } },
       },
@@ -177,49 +176,36 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     const crn = status.crn;
 
-    // ── 2. Department (auto-create if missing) ──────────────────────────────
+    // ── 2. Department ────────────────────────────────────────────────────────
+    // Use existing department if present. Do NOT auto-create with a hardcoded
+    // taxRegime — the regime varies by business type (VAT, turnover, micro, etc.)
+    // and cannot be determined automatically. The admin must configure it via
+    // the Departments management page, which stores the correct regime in DB.
     if (restaurant.departments.length > 0) {
       status.department = restaurant.departments[0];
     } else {
-      try {
-        const dept = await prisma.department.create({
-          data: {
-            restaurantId: id,
-            name: "Main",
-            taxDepartmentId: "1",
-            taxRegime: "1",
-            isDefault: true,
-            isActive: true,
-          },
-          select: { id: true, name: true, taxDepartmentId: true, taxRegime: true },
-        });
-        status.department = dept;
-      } catch (e) {
-        status.departmentError = `Failed to create department: ${e instanceof Error ? e.message : "unknown"}`;
-      }
+      status.departmentError =
+        "No department configured. Add one via the Departments management page " +
+        "(select your tax regime: 1=VAT, 2=VAT-exempt, 3=Turnover, 7=Micro). " +
+        "The tax regime cannot be determined automatically — it reflects the company's " +
+        "legal tax classification and is not available from SRC certificate data.";
     }
 
-    // ── 3. Cashier (auto-create if missing, ID=1 = SRC's first cashier) ──────
+    // ── 3. Cashier ───────────────────────────────────────────────────────────
+    // Use existing cashier if present. Do NOT auto-create with taxCashierId="1":
+    // the SRC VCR API has no getCashierList endpoint, so the actual SRC-assigned
+    // cashier ID cannot be fetched programmatically. SRC assigns IDs sequentially
+    // but the starting value is not always 1. The wrong cashierId causes SRC to
+    // reject fiscal receipts. The admin must configure it via the Cashiers
+    // management page using the ID shown in SRC cabinet → ECR page → Cashiers.
     if (restaurant.cashiers.length > 0) {
       status.cashier = restaurant.cashiers[0];
     } else {
-      try {
-        const autoPin = randomBytes(2).toString("hex"); // 4 hex chars
-        const cashier = await prisma.cashier.create({
-          data: {
-            restaurantId: id,
-            name: "Default Cashier",
-            taxCashierId: "1",
-            pinCodeHash: await hash(autoPin, 12),
-            isDefault: true,
-            isActive: true,
-          },
-          select: { id: true, name: true, taxCashierId: true },
-        });
-        status.cashier = cashier;
-      } catch (e) {
-        status.cashierError = `Failed to create cashier: ${e instanceof Error ? e.message : "unknown"}`;
-      }
+      status.cashierError =
+        "No cashier configured. The SRC VCR API has no getCashierList endpoint — " +
+        "the Tax Cashier ID cannot be fetched automatically. Add a cashier via " +
+        "the Cashiers management page using the ID from your SRC cabinet " +
+        "(ECR page → Cashiers section).";
     }
 
     // ── 4. SRC connection + activation ──────────────────────────────────────
@@ -272,25 +258,35 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         }
       }
 
-      // Configure department with SRC if we have one
+      // Configure department with SRC using the stored taxRegime (not hardcoded)
       if (status.department && (status.connected || isMock)) {
         try {
           const seq = await nextSeq(crn);
-          await client.configureDepartments(crn, seq, [{ dep: 1, taxRegime: 1 }]);
+          const taxRegimeNum = Number(status.department.taxRegime);
+          await client.configureDepartments(crn, seq, [{ dep: 1, taxRegime: taxRegimeNum }]);
         } catch {
-          // Non-fatal — department config may already exist in SRC
+          // Non-fatal — department config may already be registered in SRC
         }
       }
     } catch (e) {
       status.connectionError = e instanceof Error ? e.message : "Failed to initialise SRC client";
     }
 
-    // Advance onboarding step
-    const targetStep = 9; // past CRN(4) + cert(5) + connection(6) + dept(7) + activation(8) + cashier(9)
-    await prisma.restaurant.update({
-      where: { id },
-      data: { srcOnboardingStep: targetStep },
-    });
+    // Advance srcOnboardingStep only as far as operations actually succeeded.
+    // Step numbering matches the old 12-step DB convention (cert=5, conn=6, dept=7, ecr=8, cashier=9).
+    let achievedStep = 5; // cert uploaded — this function was called, so cert is in DB
+    if (status.connected) achievedStep = 6;
+    if (status.connected && status.department) achievedStep = Math.max(achievedStep, 7);
+    if (status.connected && status.activated) achievedStep = Math.max(achievedStep, 8);
+    if (status.cashier) achievedStep = Math.max(achievedStep, 9);
+
+    const currentStep = restaurant.srcOnboardingStep ?? 0;
+    if (achievedStep > currentStep) {
+      await prisma.restaurant.update({
+        where: { id },
+        data: { srcOnboardingStep: achievedStep },
+      });
+    }
 
     return NextResponse.json(status, { status: 200 });
   } catch (err) {
