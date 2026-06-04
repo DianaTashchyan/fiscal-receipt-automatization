@@ -20,17 +20,15 @@ type RestaurantData = {
   isMockMode: boolean;
 };
 
-// Steps — CRN (4), Department (7), ECR Activation (8), Cashier (9) are all automatic.
-// The user interacts only with: TIN(1), CSR(2), SRC submit(3), cert upload(5), products(10), API key(11), test(12).
 const STEPS = [
-  { n: 1,  title: "Enter TIN",              icon: "🏢", hint: "Verify company data by TIN" },
-  { n: 2,  title: "Generate CSR",           icon: "🔑", hint: "Create key pair and CSR" },
-  { n: 3,  title: "Submit to SRC",          icon: "📤", hint: "Upload CSR + register IP in u6" },
-  { n: 4,  title: "Upload Certificate",     icon: "🔒", hint: "Upload signed .crt — backend auto-configures everything" },
-  { n: 5,  title: "Auto-Configuration",     icon: "⚙",  hint: "CRN · Department · Cashier · ECR — all automatic" },
-  { n: 6,  title: "Add Products",           icon: "📦", hint: "Good codes + ADG codes required by SRC" },
-  { n: 7,  title: "Generate API Key",       icon: "🗝",  hint: "POS integration key" },
-  { n: 8,  title: "Test Receipt",           icon: "🧾", hint: "Print and verify" },
+  { n: 1, title: "Company Info",     short: "Company",     description: "Verify your company by tax ID" },
+  { n: 2, title: "Generate CSR",     short: "CSR",         description: "Create your cryptographic key pair" },
+  { n: 3, title: "Register with SRC", short: "Register",   description: "Submit CSR to the SRC taxpayer portal" },
+  { n: 4, title: "Upload Certificate", short: "Certificate", description: "Upload the signed certificate from SRC" },
+  { n: 5, title: "Auto-Setup",       short: "Auto-Setup",  description: "Automated configuration of all SRC parameters" },
+  { n: 6, title: "Products",         short: "Products",    description: "Add products required for fiscal receipts" },
+  { n: 7, title: "API Key",          short: "API Key",     description: "Generate your POS integration key" },
+  { n: 8, title: "Complete",         short: "Done",        description: "Verify with a test receipt" },
 ];
 
 function getToken() {
@@ -57,12 +55,10 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   const [restaurant, setRestaurant] = useState(initial);
   const [sessionExpired, setSessionExpired] = useState(false);
 
-  // Map old 12-step DB value to our 8-step wizard display
   function mapDbStepToWizard(dbStep: number): number {
     if (dbStep <= 0) return 1;
     if (dbStep <= 2) return dbStep;
     if (dbStep === 3) return 3;
-    // DB steps 4-9 all map to wizard step 5 (auto-configure) or beyond
     if (dbStep <= 9) return 5;
     if (dbStep <= 10) return 6;
     if (dbStep <= 11) return 7;
@@ -95,16 +91,17 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   function stepStatus(n: number): "completed" | "active" | "pending" {
-    // Map wizard step to DB step for completion check
     const dbThreshold = [0, 2, 2, 3, 5, 9, 10, 11, 12][n] ?? 12;
     if (restaurant.onboardingStep >= dbThreshold) return "completed";
     if (step === n) return "active";
     return "pending";
   }
 
-  // ── Auto-configure state (populated after cert upload) ─────────────────────
+  const completedCount = STEPS.filter((s) => stepStatus(s.n) === "completed").length;
+  const progressPct = Math.round((completedCount / STEPS.length) * 100);
+
+  // ── Auto-configure state ────────────────────────────────────────────────────
   const [autoConfig, setAutoConfig] = useState<AutoConfigStatus | null>(() => {
-    // Pre-populate if restaurant already has data
     if (initial.crn && initial.departments.length > 0 && initial.cashiers.length > 0) {
       return {
         crn: initial.crn,
@@ -141,9 +138,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (r.ok) {
       const ac = r.data as AutoConfigStatus;
       setAutoConfig(ac);
-      if (ac.crn) {
-        setRestaurant((prev) => ({ ...prev, crn: ac.crn }));
-      }
+      if (ac.crn) setRestaurant((prev) => ({ ...prev, crn: ac.crn }));
       if (ac.department && restaurant.departments.length === 0) {
         setRestaurant((prev) => ({
           ...prev,
@@ -179,7 +174,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     setLookupLoading(false);
     if (!r.ok) { setTinError((r.data.error as string) ?? "Lookup failed"); return; }
     const d = r.data as { name?: string | null; address?: string | null; status?: string | null; registrationNumber?: string | null; registrationDate?: string | null; isMock: boolean; notFound?: boolean; error?: string };
-    if (d.notFound) { setTinError(`TIN ${t} not found in Armenian company register.`); return; }
+    if (d.notFound) { setTinError(`TIN ${t} not found in the Armenian company register.`); return; }
     setLookupMeta({ isMock: d.isMock, status: d.status ?? null, registrationNumber: d.registrationNumber ?? null, registrationDate: d.registrationDate ?? null, notFound: false, warning: d.isMock ? (d.error ?? "Using mock data.") : null });
     if (d.name) setCompanyName(d.name);
     if (d.address) setCompanyAddress(d.address);
@@ -191,7 +186,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     const r = await callApi(`/api/restaurants/${restaurant.id}`, "PATCH", { tin: tinInput.trim(), name: companyName.trim(), address: companyAddress.trim() });
     if (r.ok) {
       setRestaurant((prev) => ({ ...prev, tin: tinInput.trim(), name: companyName.trim(), address: companyAddress.trim() }));
-      setResult({ ok: true, message: "Company data saved." });
+      setResult({ ok: true, message: "Company data saved successfully." });
       await advanceDbStep(1);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to save" });
@@ -208,7 +203,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (r.ok) {
       setCsrPem(r.data.csrPem as string);
       setRestaurant((prev) => ({ ...prev, hasCsr: true }));
-      setResult({ ok: true, message: "CSR generated. Download it and proceed to step 3." });
+      setResult({ ok: true, message: "CSR generated. Download it before continuing." });
       await advanceDbStep(2);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to generate CSR" });
@@ -289,7 +284,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   const [prodPrice, setProdPrice]       = useState("");
 
   type GoodItem = { goodName: string; goodCode: string; price: number };
-  const [goodList, setGoodList]         = useState<GoodItem[]>([]);
+  const [goodList, setGoodList]               = useState<GoodItem[]>([]);
   const [goodListLoading, setGoodListLoading] = useState(false);
   const [goodListError, setGoodListError]     = useState("");
 
@@ -307,9 +302,9 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
       const lists = (r.data as GoodListPayload).result?.result?.goodLists ?? [];
       const goods = lists.flatMap((l) => l.goods ?? []);
       setGoodList(goods);
-      if (goods.length === 0) setGoodListError("SRC returned an empty good list.");
+      if (goods.length === 0) setGoodListError("SRC returned an empty product list.");
     } else {
-      setGoodListError((r.data.error as string) ?? "Failed to fetch good list from SRC.");
+      setGoodListError((r.data.error as string) ?? "Failed to fetch product list from SRC.");
     }
   }
 
@@ -326,12 +321,12 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 
   async function doAddProduct() {
     if (!prodName || !prodGoodCode || !prodAdgCode || !prodPrice) {
-      setResult({ ok: false, message: "Product name, good code, ADG code and price are required." });
+      setResult({ ok: false, message: "Product name, good code, ADG code and price are all required." });
       return;
     }
     const deptId = prodDeptId || restaurant.departments[0]?.id;
     if (!deptId) {
-      setResult({ ok: false, message: "No department configured. Complete auto-configuration first." });
+      setResult({ ok: false, message: "No department configured yet. Complete auto-setup first." });
       return;
     }
     setLoading(true); setResult(null);
@@ -341,7 +336,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     });
     if (r.ok) {
       setRestaurant((prev) => ({ ...prev, products: [...prev.products, { id: (r.data as { id: string }).id, name: prodName }] }));
-      setResult({ ok: true, message: `Product "${prodName}" added.` });
+      setResult({ ok: true, message: `"${prodName}" added successfully.` });
       await advanceDbStep(10);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to add product." });
@@ -350,7 +345,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   // ── Step 7: API Key ─────────────────────────────────────────────────────────
-  const [apiKey, setApiKey]   = useState<string | null>(null);
+  const [apiKey, setApiKey]     = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
 
   async function doGenerateApiKey() {
@@ -373,608 +368,1086 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 
   const isReallyComplete = (restaurant.hasCert && restaurant.cashiers.length > 0 && restaurant.departments.length > 0 && restaurant.products.length > 0 && restaurant.hasApiKey);
 
-  // ─── SESSION EXPIRED ───────────────────────────────────────────────────────
+  // ── SESSION EXPIRED ─────────────────────────────────────────────────────────
   if (sessionExpired) {
     return (
       <div className="max-w-md mx-auto mt-20 text-center">
-        <div className="bg-red-50 border border-red-200 rounded-xl p-8">
-          <h2 className="text-lg font-semibold text-red-900 mb-2">Session expired</h2>
-          <p className="text-sm text-red-700 mb-4">Your login session has expired. Please log in again.</p>
-          <button onClick={() => window.location.reload()} className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700">
-            Reload page
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-10">
+          <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mx-auto mb-4">
+            <svg className="w-6 h-6 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" />
+            </svg>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Session expired</h2>
+          <p className="text-sm text-gray-500 mb-5">Your session has timed out. Please log in again to continue.</p>
+          <button onClick={() => window.location.reload()}
+            className="px-5 py-2.5 bg-red-600 text-white rounded-lg text-sm font-medium hover:bg-red-700 transition-colors">
+            Log in again
           </button>
         </div>
       </div>
     );
   }
 
+  const currentStepMeta = STEPS[step - 1];
+
   return (
-    <div className="max-w-3xl">
-      {/* Header */}
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <Link href={`/admin/restaurants/${restaurant.id}`} className="text-sm text-gray-500 hover:text-gray-700">
-            ← {restaurant.name}
-          </Link>
-          <h1 className="text-2xl font-bold text-gray-900 mt-1">SRC Onboarding Wizard</h1>
-          <p className="text-sm text-gray-500 mt-0.5">
-            TIN → CSR → Submit to SRC → Upload .crt → automatic backend configuration
-          </p>
+    <div className="max-w-3xl mx-auto">
+
+      {/* ── Page header ─────────────────────────────────────────────────────── */}
+      <div className="mb-8">
+        <Link href={`/admin/restaurants/${restaurant.id}`}
+          className="inline-flex items-center gap-1.5 text-sm text-gray-400 hover:text-gray-600 transition-colors mb-3">
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          {restaurant.name}
+        </Link>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">SRC Integration Setup</h1>
+            <p className="text-sm text-gray-500 mt-1">
+              Connect your account to the Armenian Tax Service (SRC) for fiscal receipt issuance.
+            </p>
+          </div>
+          {restaurant.isMockMode && (
+            <span className="shrink-0 mt-0.5 inline-flex items-center gap-1.5 px-3 py-1 bg-amber-100 text-amber-700 text-xs font-semibold rounded-full border border-amber-200 uppercase tracking-wide">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500 inline-block"></span>
+              Mock Mode
+            </span>
+          )}
         </div>
-        {restaurant.isMockMode && (
-          <span className="shrink-0 mt-1 px-3 py-1 bg-yellow-400 text-yellow-900 text-xs font-bold rounded-full tracking-wide uppercase">
-            MOCK MODE
-          </span>
-        )}
       </div>
 
-      {/* Step pills */}
-      <div className="flex gap-1 mb-6 overflow-x-auto pb-1">
-        {STEPS.map((s) => {
-          const status = stepStatus(s.n);
-          return (
-            <button key={s.n} onClick={() => goTo(s.n)} title={s.hint}
-              className={`shrink-0 flex flex-col items-center gap-1 px-2 py-2 rounded-lg text-xs font-medium border transition-colors ${
-                status === "active" ? "bg-blue-600 text-white border-blue-600"
-                : status === "completed" ? "bg-green-50 text-green-700 border-green-300"
-                : "bg-gray-50 text-gray-400 border-gray-200"
-              }`}>
-              <span>{s.icon}</span>
-              <span className="text-[10px]">{s.n}</span>
-              {status === "completed" && <span className="text-[9px] text-green-600">✓</span>}
-            </button>
-          );
-        })}
-      </div>
+      {/* ── Stepper ─────────────────────────────────────────────────────────── */}
+      <div className="mb-6">
+        {/* Progress bar */}
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-gray-500">Step {step} of {STEPS.length}</span>
+          <span className="text-xs font-medium text-gray-500">{progressPct}% complete</span>
+        </div>
+        <div className="h-1.5 bg-gray-100 rounded-full mb-5 overflow-hidden">
+          <div
+            className="h-full bg-blue-500 rounded-full transition-all duration-500"
+            style={{ width: `${Math.max(progressPct, step === 1 ? 4 : 0)}%` }}
+          />
+        </div>
 
-      {/* Step panel */}
-      <div className="bg-white border border-gray-200 rounded-xl p-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-0.5">
-          Step {step}: {STEPS[step - 1].title}
-        </h2>
-        <p className="text-xs text-gray-400 mb-4">{STEPS[step - 1].hint}</p>
-
-        {/* ── Step 1: TIN ── */}
-        {step === 1 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              Enter your TIN to look up company data from the Armenian company register.
-            </p>
-            <div className="flex gap-2 mb-2">
-              <input value={tinInput} onChange={(e) => { setTinInput(e.target.value); setLookupMeta(null); setTinError(""); }}
-                maxLength={8} placeholder="8-digit TIN"
-                className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              <button onClick={doTinLookup} disabled={lookupLoading || !/^\d{8}$/.test(tinInput.trim())}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 whitespace-nowrap">
-                {lookupLoading ? "Looking up…" : "Lookup company"}
-              </button>
-            </div>
-            {tinError && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 mb-3">{tinError}</div>}
-            {lookupMeta && !lookupMeta.notFound && (
-              <div className={`px-3 py-2 rounded-lg text-xs mb-3 border ${lookupMeta.isMock ? "bg-yellow-50 border-yellow-300 text-yellow-800" : "bg-green-50 border-green-300 text-green-800"}`}>
-                {lookupMeta.isMock ? <><span className="font-mono font-bold">[MOCK]</span> {lookupMeta.warning}</> : "Company data loaded from e-register.moj.am."}
-              </div>
-            )}
-            <div className="flex flex-col gap-3 mb-4">
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Company name</span>
-                <input value={companyName} onChange={(e) => setCompanyName(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Legal address</span>
-                <input value={companyAddress} onChange={(e) => setCompanyAddress(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
-              </label>
-            </div>
-            <ResultBanner result={result} />
-            <div className="flex gap-2">
-              <StepButton onClick={doSaveCompany} loading={loading} label="Save company data →" />
-            </div>
-            {result?.ok && <button onClick={() => goTo(2)} className="mt-3 text-sm text-blue-600 hover:underline block">Continue to step 2 →</button>}
-          </div>
-        )}
-
-        {/* ── Step 2: CSR ── */}
-        {step === 2 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-3">
-              Generate an RSA-2048 key pair and Certificate Signing Request (CSR). The private key is stored encrypted on the server.
-            </p>
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs font-mono text-gray-600 mb-3">
-              CN={restaurant.tin} Tin, OU={restaurant.tin} Tin, O={restaurant.tin} Tin, L=Yerevan, ST=Yerevan, C=AM
-            </div>
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
-              <strong>Warning:</strong> Re-generating a CSR creates a new private key. Any previously uploaded certificate will stop working.
-            </div>
-            <ResultBanner result={result} />
-            <div className="flex gap-2 flex-wrap">
-              <StepButton onClick={doGenerateCsr} loading={loading} label={restaurant.hasCsr ? "Re-generate CSR" : "Generate CSR"} />
-              {(csrPem || restaurant.hasCsr) && (
-                <button onClick={csrPem ? downloadCsr : downloadCsrFromServer}
-                  className="px-4 py-2 text-sm bg-green-600 text-white rounded-lg hover:bg-green-700">
-                  ⬇ Download CSR ({restaurant.tin}.csr)
+        {/* Step dots */}
+        <div className="flex items-center">
+          {STEPS.map((s, i) => {
+            const status = stepStatus(s.n);
+            const isLast = i === STEPS.length - 1;
+            return (
+              <div key={s.n} className="flex items-center flex-1 last:flex-none">
+                <button
+                  onClick={() => goTo(s.n)}
+                  title={s.description}
+                  className="flex flex-col items-center gap-1 group focus:outline-none"
+                >
+                  <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all border-2 ${
+                    status === "completed"
+                      ? "bg-emerald-500 border-emerald-500 text-white"
+                      : status === "active"
+                      ? "bg-blue-600 border-blue-600 text-white shadow-md shadow-blue-200"
+                      : "bg-white border-gray-200 text-gray-400 group-hover:border-gray-300"
+                  }`}>
+                    {status === "completed" ? (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                      </svg>
+                    ) : (
+                      <span>{s.n}</span>
+                    )}
+                  </div>
+                  <span className={`text-[10px] font-medium hidden sm:block ${
+                    status === "active" ? "text-blue-600" : status === "completed" ? "text-emerald-600" : "text-gray-400"
+                  }`}>
+                    {s.short}
+                  </span>
                 </button>
+                {!isLast && (
+                  <div className={`flex-1 h-0.5 mx-1 mb-4 sm:mb-5 transition-colors ${
+                    stepStatus(s.n) === "completed" ? "bg-emerald-300" : "bg-gray-100"
+                  }`} />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* ── Step card ───────────────────────────────────────────────────────── */}
+      <div className="bg-white border border-gray-200 rounded-2xl shadow-sm overflow-hidden">
+        {/* Card header */}
+        <div className="px-7 py-5 border-b border-gray-100 bg-gray-50/50">
+          <div className="flex items-center gap-3">
+            <div className={`w-9 h-9 rounded-xl flex items-center justify-center text-sm font-bold ${
+              stepStatus(step) === "completed"
+                ? "bg-emerald-100 text-emerald-700"
+                : "bg-blue-100 text-blue-700"
+            }`}>
+              {stepStatus(step) === "completed" ? (
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              ) : (
+                <span>{step}</span>
               )}
             </div>
-            {restaurant.hasCsr && (
-              <p className="text-xs text-gray-400 mt-2">
-                CSR created: {restaurant.csrCreatedAt ? new Date(restaurant.csrCreatedAt).toLocaleString() : "—"}
+            <div>
+              <h2 className="text-base font-semibold text-gray-900">{currentStepMeta.title}</h2>
+              <p className="text-xs text-gray-400 mt-0.5">{currentStepMeta.description}</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Card body */}
+        <div className="px-7 py-6">
+
+          {/* ── Step 1: Company Info ── */}
+          {step === 1 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                Enter your 8-digit Tax Identification Number (TIN) to automatically load your company information from the Armenian business registry.
               </p>
-            )}
-            {(csrPem || restaurant.hasCsr) && (
-              <button onClick={() => goTo(3)} className="mt-4 text-sm text-blue-600 hover:underline block">
-                CSR downloaded → Continue to step 3
-              </button>
-            )}
-          </div>
-        )}
 
-        {/* ── Step 3: Submit to SRC ── */}
-        {step === 3 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              This step is performed in the SRC taxpayer cabinet. Follow the instructions below.
-            </p>
-            <div className="bg-amber-50 border border-amber-300 rounded-lg p-4 text-sm text-amber-800 mb-4">
-              <strong>Browser certificate required:</strong> The SRC cabinet requires a client certificate. Opening it without the certificate gives <code className="text-xs bg-amber-100 px-1 rounded">ERR_BAD_SSL_CLIENT_AUTH_CERT</code>.
-            </div>
-            <ol className="list-decimal list-inside flex flex-col gap-3 text-sm text-gray-700 mb-4">
-              <li>Open the SRC taxpayer cabinet using the certificate or login method provided by SRC.</li>
-              <li>Go to <strong>Reports → Application u6</strong> (ECR registration).</li>
-              <li>In section <strong>5.2 &ldquo;IP address&rdquo;</strong>, enter your server&apos;s static outbound IP.</li>
-              <li>In <strong>&ldquo;Certificate signing request&rdquo;</strong>, upload the <code className="bg-gray-100 px-1 rounded">{restaurant.tin}.csr</code> file from step 2.</li>
-              <li>Submit the form. SRC will review (1–5 business days).</li>
-              <li>After approval, SRC returns a signed <strong>.crt</strong> file. Continue to step 4.</li>
-            </ol>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 mb-4">
-              After SRC approves your u6, the backend will automatically extract all configuration from the signed certificate. You will not need to manually enter CRN, department, or cashier data.
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => goTo(2)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={() => { advanceDbStep(3); goTo(4); }} label="CSR submitted → Upload certificate (step 4)" />
-            </div>
-          </div>
-        )}
-
-        {/* ── Step 4: Upload .crt → triggers auto-configure ── */}
-        {step === 4 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-3">
-              Upload the certificate file returned by SRC after u6 approval. The backend will automatically handle CRN, department, cashier, and ECR activation — no manual input required.
-            </p>
-
-            {restaurant.hasCert && (
-              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ Certificate already configured ({restaurant.certConfiguredAt ? new Date(restaurant.certConfiguredAt).toLocaleDateString() : "—"}). You can replace it below.
-              </div>
-            )}
-
-            <div className="flex gap-2 mb-4">
-              <button onClick={() => { setCertMode("crt"); setCertFile(null); setCertError(""); }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${certMode === "crt" ? "bg-blue-600 text-white border-blue-600" : "bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"}`}>
-                Upload signed .crt (recommended)
-              </button>
-              <button onClick={() => { setCertMode("p12"); setCertFile(null); setCertError(""); }}
-                className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${certMode === "p12" ? "bg-blue-600 text-white border-blue-600" : "bg-gray-50 text-gray-600 border-gray-300 hover:bg-gray-100"}`}>
-                Upload .p12 directly
-              </button>
-            </div>
-
-            {certMode === "crt" && (
-              <div className="flex flex-col gap-3 mb-4">
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
-                  The server combines the signed .crt with the private key generated in step 2 to create a .p12 internally. No password required.
-                </div>
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">Signed .crt from SRC</span>
-                  <input type="file" accept=".crt" onChange={(e) => { setCertFile(e.target.files?.[0] ?? null); setCertError(""); }}
-                    className="text-sm border border-gray-300 rounded-lg px-3 py-2" />
-                </label>
-              </div>
-            )}
-
-            {certMode === "p12" && (
-              <div className="flex flex-col gap-3 mb-4">
-                <p className="text-xs text-gray-500">
-                  Combine the signed .crt with the private key into a .p12 locally:
-                  <code className="block mt-1 bg-gray-100 p-2 rounded font-mono text-xs break-all">
-                    openssl pkcs12 -export -in {restaurant.tin}.crt -inkey {restaurant.tin}.key.pem -out {restaurant.tin}.p12
-                  </code>
-                </p>
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">.p12 / .pfx file</span>
-                  <input type="file" accept=".p12,.pfx" onChange={(e) => { setCertFile(e.target.files?.[0] ?? null); setCertError(""); }}
-                    className="text-sm border border-gray-300 rounded-lg px-3 py-2" />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">Certificate password</span>
-                  <input type="password" value={certPassword} onChange={(e) => { setCertPassword(e.target.value); setCertError(""); }}
-                    placeholder="Password used when creating the .p12"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-                </label>
-              </div>
-            )}
-
-            {certError && <p className="text-sm text-red-600 mb-3">{certError}</p>}
-            <ResultBanner result={result} />
-            {(loading || autoConfigLoading) && (
-              <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 animate-pulse">
-                {loading ? "Uploading certificate…" : "Running auto-configuration (CRN · Department · Cashier · ECR)…"}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button onClick={() => goTo(3)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={certMode === "p12" ? doUploadP12 : doUploadCrt} loading={loading || autoConfigLoading}
-                label={certMode === "crt" ? "Upload .crt & Auto-Configure" : "Upload .p12 & Auto-Configure"} />
-            </div>
-            {restaurant.hasCert && !loading && !autoConfigLoading && (
-              <button onClick={() => { runAutoConfig().then(() => goTo(5)); }} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Re-run auto-configuration →
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ── Step 5: Auto-Configuration Status ── */}
-        {step === 5 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              After certificate upload, the backend automatically configures all SRC data. No manual input is needed for any of these values.
-            </p>
-
-            {autoConfigLoading && (
-              <div className="px-3 py-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-700 mb-4 animate-pulse">
-                Running auto-configuration… This may take 10–30 seconds.
-              </div>
-            )}
-
-            {!autoConfig && !autoConfigLoading && (
-              <div className="px-3 py-3 bg-amber-50 border border-amber-200 rounded-lg text-sm text-amber-700 mb-4">
-                Auto-configuration has not run yet.{" "}
-                {restaurant.hasCert
-                  ? <button onClick={() => runAutoConfig()} className="underline font-medium">Run it now →</button>
-                  : "Upload your certificate in step 4 to trigger it."}
-              </div>
-            )}
-
-            {autoConfig && (
-              <div className="flex flex-col gap-3 mb-4">
-                {/* CRN */}
-                <AutoConfigRow
-                  label="CRN (Cash Register Number)"
-                  value={autoConfig.crn}
-                  source={autoConfig.crnSource}
-                  error={autoConfig.crnError}
-                  isMock={autoConfig.isMockMode}
-                />
-
-                {/* Department */}
-                <AutoConfigRow
-                  label="Department"
-                  value={autoConfig.department ? `dep ${autoConfig.department.taxDepartmentId} — ${autoConfig.department.name} — regime ${autoConfig.department.taxRegime}` : null}
-                  source={autoConfig.department ? "database" : null}
-                  error={autoConfig.departmentError}
-                  isMock={false}
-                />
-
-                {/* Cashier */}
-                <AutoConfigRow
-                  label="Cashier"
-                  value={autoConfig.cashier ? `${autoConfig.cashier.name} (Tax ID: ${autoConfig.cashier.taxCashierId})` : null}
-                  source={autoConfig.cashier ? "database" : null}
-                  error={autoConfig.cashierError}
-                  isMock={false}
-                />
-
-                {/* Connection */}
-                <AutoConfigRow
-                  label="SRC Connection (mTLS)"
-                  value={autoConfig.connected ? "Connected — certificate accepted by SRC" : null}
-                  source={autoConfig.connected ? "database" : null}
-                  error={autoConfig.connectionError}
-                  isMock={autoConfig.isMockMode}
-                />
-
-                {/* Activation */}
-                <AutoConfigRow
-                  label="ECR Activation"
-                  value={autoConfig.activated ? "ECR activated" : null}
-                  source={autoConfig.activated ? "database" : null}
-                  error={autoConfig.activationError}
-                  isMock={autoConfig.isMockMode}
-                />
-              </div>
-            )}
-
-            {/* Cashier note — no endpoint to auto-fetch from SRC */}
-            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-xs text-gray-600 mb-4">
-              <strong>Why cashier ID is 1:</strong> The SRC VCR API has no getCashierList or getCashierInfo endpoint — cashier IDs cannot be fetched programmatically. SRC assigns ID&nbsp;1 to the first cashier registered during u6 approval. This default is used automatically.
-            </div>
-
-            {autoConfig?.crnError && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-700 mb-4">
-                <strong>CRN blocking error:</strong> {autoConfig.crnError}
-              </div>
-            )}
-
-            <ResultBanner result={result} />
-            <div className="flex gap-2">
-              <button onClick={() => goTo(4)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back to upload</button>
-              {restaurant.hasCert && (
-                <button onClick={() => runAutoConfig()} disabled={autoConfigLoading}
-                  className="px-4 py-2 text-sm border border-blue-300 text-blue-700 rounded-lg hover:bg-blue-50 disabled:opacity-50">
-                  {autoConfigLoading ? "Running…" : "Re-run auto-configure"}
-                </button>
-              )}
-            </div>
-            {autoConfig && !autoConfig.crnError && (
-              <button onClick={() => goTo(6)} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Configuration complete → Add products (step 6)
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ── Step 6: Products ── */}
-        {step === 6 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-3">
-              Add at least one product. Good code and ADG code are required by SRC for every fiscal receipt line.
-              Fetch the code list from SRC to select instead of typing manually.
-            </p>
-            <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-              <div className="flex items-center gap-3 mb-2">
-                <span className="text-sm font-medium text-gray-700">SRC product catalogue</span>
-                <button onClick={doFetchGoodList} disabled={goodListLoading || !restaurant.crn}
-                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50">
-                  {goodListLoading ? "Fetching…" : "Fetch good list from SRC"}
-                </button>
-              </div>
-              {goodListError && <p className="text-xs text-amber-700">{goodListError}</p>}
-              {goodList.length > 0 && (
-                <div>
-                  <p className="text-xs text-gray-500 mb-1">{goodList.length} items — select to auto-fill codes:</p>
-                  <select size={Math.min(goodList.length, 5)}
-                    onChange={(e) => { const g = goodList[Number(e.target.value)]; if (g) selectGoodCode(g); }}
-                    className="w-full text-xs border border-gray-300 rounded p-1 font-mono" defaultValue="">
-                    <option value="" disabled>— select a good —</option>
-                    {goodList.map((g, i) => (
-                      <option key={i} value={i}>{g.goodCode} — {g.goodName} ({g.price} AMD)</option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-
-            {restaurant.products.length > 0 && (
-              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ {restaurant.products.length} product(s) already added.
-              </div>
-            )}
-            <div className="grid grid-cols-2 gap-3 mb-4">
-              <label className="flex flex-col gap-1 col-span-2">
-                <span className="text-sm font-medium text-gray-700">Product name (max 50 chars)</span>
-                <input value={prodName} onChange={(e) => setProdName(e.target.value)} maxLength={50}
-                  placeholder="e.g. Margherita Pizza"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Good code <span className="text-red-500">*</span></span>
-                <input value={prodGoodCode} onChange={(e) => setProdGoodCode(e.target.value)}
-                  placeholder="e.g. 2106-90"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">ADG code <span className="text-red-500">*</span></span>
-                <input value={prodAdgCode} onChange={(e) => setProdAdgCode(e.target.value)}
-                  placeholder="e.g. 2106"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Unit</span>
-                <input value={prodUnit} onChange={(e) => setProdUnit(e.target.value)}
-                  placeholder="piece"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Price (AMD)</span>
-                <input value={prodPrice} onChange={(e) => setProdPrice(e.target.value)}
-                  placeholder="3500" type="number"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-              </label>
-              {restaurant.departments.length > 0 && (
-                <label className="flex flex-col gap-1 col-span-2">
-                  <span className="text-sm font-medium text-gray-700">Department</span>
-                  <select value={prodDeptId} onChange={(e) => setProdDeptId(e.target.value)}
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                    {restaurant.departments.map((d) => (
-                      <option key={d.id} value={d.id}>{d.name} (dep {d.taxDepartmentId})</option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </div>
-            <ResultBanner result={result} />
-            <div className="flex gap-2">
-              <button onClick={() => goTo(5)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={doAddProduct} loading={loading} label="Add product" />
-              {restaurant.products.length > 0 && (
-                <button onClick={() => goTo(7)} className="px-4 py-2 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
-                  Skip (already added) →
-                </button>
-              )}
-            </div>
-            {result?.ok && (
-              <button onClick={() => goTo(7)} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Product added → Generate API key (step 7)
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ── Step 7: API Key ── */}
-        {step === 7 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              Generate an API key to connect your POS system. Copy it immediately — it is shown only once.
-            </p>
-            {restaurant.hasApiKey && !apiKey && (
-              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ At least one API key already exists for this restaurant.
-              </div>
-            )}
-            <ResultBanner result={result} />
-            {apiKey ? (
-              <div className="mb-4">
-                <div className="bg-gray-900 rounded-lg p-3 flex items-center gap-2 mb-2">
-                  <code className="text-green-400 text-xs font-mono flex-1 break-all">{apiKey}</code>
-                  <button onClick={copyKey} className="shrink-0 px-2 py-1 text-xs bg-gray-700 text-white rounded hover:bg-gray-600">
-                    {keyCopied ? "Copied!" : "Copy"}
+              {/* TIN lookup */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">Tax Identification Number (TIN)</label>
+                <div className="flex gap-2">
+                  <input
+                    value={tinInput}
+                    onChange={(e) => { setTinInput(e.target.value); setLookupMeta(null); setTinError(""); }}
+                    maxLength={8}
+                    placeholder="00000000"
+                    className="flex-1 border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                  <button
+                    onClick={doTinLookup}
+                    disabled={lookupLoading || !/^\d{8}$/.test(tinInput.trim())}
+                    className="px-4 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+                  >
+                    {lookupLoading ? (
+                      <span className="flex items-center gap-2"><Spinner size="sm" /> Looking up…</span>
+                    ) : "Look up"}
                   </button>
                 </div>
-                <p className="text-xs text-amber-600">Use as <code>X-Api-Key</code> header in POS API requests. Not shown again.</p>
+                {tinError && <InlineError message={tinError} />}
+                {lookupMeta && !lookupMeta.notFound && (
+                  <div className={`mt-2 flex items-start gap-2.5 px-3.5 py-2.5 rounded-lg text-xs border ${
+                    lookupMeta.isMock
+                      ? "bg-amber-50 border-amber-200 text-amber-700"
+                      : "bg-emerald-50 border-emerald-200 text-emerald-700"
+                  }`}>
+                    <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.857-9.809a.75.75 0 00-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 10-1.06 1.061l2.5 2.5a.75.75 0 001.137-.089l4-5.5z" clipRule="evenodd" />
+                    </svg>
+                    {lookupMeta.isMock
+                      ? <span><strong>Mock data</strong> — {lookupMeta.warning}</span>
+                      : "Company data loaded from the Armenian business registry."}
+                  </div>
+                )}
               </div>
-            ) : (
-              <div className="flex gap-2 mb-4">
-                <button onClick={() => goTo(6)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-                <StepButton onClick={doGenerateApiKey} loading={loading} label="Generate API key" />
-              </div>
-            )}
-            {(apiKey || restaurant.hasApiKey) && (
-              <button onClick={() => { advanceDbStep(11); goTo(8); }} className="text-sm text-blue-600 hover:underline block">
-                API key ready → Finish (step 8)
-              </button>
-            )}
-          </div>
-        )}
 
-        {/* ── Step 8: Complete ── */}
-        {step === 8 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-4">
-              Print a test receipt to verify end-to-end fiscalization before going live.
-            </p>
-            <div className="mb-5 border border-gray-200 rounded-lg overflow-hidden">
-              <div className="px-4 py-2 bg-gray-50 border-b border-gray-200 text-xs font-semibold text-gray-600 uppercase tracking-wide">
-                Readiness checklist
+              {/* Company fields */}
+              <div className="space-y-4">
+                <FormField label="Company name">
+                  <input
+                    value={companyName}
+                    onChange={(e) => setCompanyName(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
+                <FormField label="Legal address">
+                  <input
+                    value={companyAddress}
+                    onChange={(e) => setCompanyAddress(e.target.value)}
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
               </div>
-              {[
-                { label: "Certificate uploaded",   ok: restaurant.hasCert,                fix: 4 },
-                { label: "Auto-configuration run", ok: !!autoConfig && !autoConfig.crnError, fix: 5 },
-                { label: "Products added",          ok: restaurant.products.length > 0,   fix: 6 },
-                { label: "API key generated",       ok: restaurant.hasApiKey,              fix: 7 },
-              ].map((item) => (
-                <div key={item.label} className={`flex items-center justify-between px-4 py-2 text-sm border-b border-gray-100 last:border-0 ${item.ok ? "bg-white" : "bg-red-50"}`}>
-                  <span className={item.ok ? "text-gray-700" : "text-red-700"}>
-                    {item.ok ? "✓ " : "✗ "}{item.label}
+
+              <ResultBanner result={result} />
+
+              <ActionBar
+                onBack={undefined}
+                onPrimary={doSaveCompany}
+                primaryLabel="Save and continue"
+                primaryLoading={loading}
+                onNext={result?.ok ? () => goTo(2) : undefined}
+                nextLabel="Go to step 2 →"
+              />
+            </div>
+          )}
+
+          {/* ── Step 2: Generate CSR ── */}
+          {step === 2 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                Generate a cryptographic key pair and a Certificate Signing Request (CSR). The private key is stored securely on the server and never leaves it.
+              </p>
+
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Certificate subject</p>
+                <code className="text-xs text-gray-600 font-mono break-all leading-relaxed">
+                  CN={restaurant.tin} Tin, OU={restaurant.tin} Tin, O={restaurant.tin} Tin, L=Yerevan, ST=Yerevan, C=AM
+                </code>
+              </div>
+
+              <Notice variant="warning">
+                Regenerating a CSR creates a new private key. Any previously uploaded certificate will stop working.
+              </Notice>
+
+              {restaurant.hasCsr && (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    CSR on file, generated{" "}
+                    {restaurant.csrCreatedAt ? new Date(restaurant.csrCreatedAt).toLocaleString() : "previously"}.
                   </span>
-                  {!item.ok && (
-                    <button onClick={() => goTo(item.fix)} className="text-xs text-blue-600 hover:underline">
-                      Go to step {item.fix}
+                </div>
+              )}
+
+              <ResultBanner result={result} />
+
+              <div className="flex flex-wrap gap-2">
+                <PrimaryButton onClick={doGenerateCsr} loading={loading} label={restaurant.hasCsr ? "Regenerate CSR" : "Generate CSR"} />
+                {(csrPem || restaurant.hasCsr) && (
+                  <SecondaryButton
+                    onClick={csrPem ? downloadCsr : downloadCsrFromServer}
+                    label={`Download ${restaurant.tin}.csr`}
+                    icon={
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                      </svg>
+                    }
+                  />
+                )}
+              </div>
+
+              {(csrPem || restaurant.hasCsr) && (
+                <ActionBar
+                  onBack={() => goTo(1)}
+                  onNext={() => goTo(3)}
+                  nextLabel="Continue to registration →"
+                />
+              )}
+            </div>
+          )}
+
+          {/* ── Step 3: Register with SRC ── */}
+          {step === 3 && (
+            <div className="space-y-5">
+              <Notice variant="info">
+                This step is completed in the SRC taxpayer portal, outside this application. Follow the instructions below.
+              </Notice>
+
+              <Notice variant="warning">
+                <strong>Browser certificate required:</strong> The SRC portal requires a client certificate to open. Without it you will see <code className="text-xs bg-amber-100 px-1 rounded">ERR_BAD_SSL_CLIENT_AUTH_CERT</code>.
+              </Notice>
+
+              <div className="space-y-3">
+                {[
+                  { n: 1, text: <>Open the SRC taxpayer portal using the certificate or login method provided by SRC.</> },
+                  { n: 2, text: <>Navigate to <strong>Reports → Application u6</strong> (ECR registration).</> },
+                  { n: 3, text: <>In section <strong>5.2 "IP address"</strong>, enter your server's static outbound IP address.</> },
+                  { n: 4, text: <>In <strong>"Certificate Signing Request"</strong>, upload the <code className="bg-gray-100 px-1.5 py-0.5 rounded text-xs font-mono">{restaurant.tin}.csr</code> file downloaded in step 2.</> },
+                  { n: 5, text: <>Submit the form. SRC typically reviews applications within <strong>1–5 business days</strong>.</> },
+                  { n: 6, text: <>Once approved, SRC will provide a signed <strong>.crt</strong> certificate file. Proceed to step 4.</> },
+                ].map((item) => (
+                  <div key={item.n} className="flex gap-3.5">
+                    <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">
+                      {item.n}
+                    </div>
+                    <p className="text-sm text-gray-600 leading-relaxed">{item.text}</p>
+                  </div>
+                ))}
+              </div>
+
+              <Notice variant="info">
+                After SRC approves your application, the backend will automatically extract all required configuration from the certificate. You will not need to enter CRN, department, or cashier data manually.
+              </Notice>
+
+              <ActionBar
+                onBack={() => goTo(2)}
+                onPrimary={() => { advanceDbStep(3); goTo(4); }}
+                primaryLabel="CSR submitted — upload certificate →"
+              />
+            </div>
+          )}
+
+          {/* ── Step 4: Upload Certificate ── */}
+          {step === 4 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                Upload the signed certificate file you received from SRC after your u6 application was approved. Everything else is configured automatically.
+              </p>
+
+              {restaurant.hasCert && (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    Certificate already on file (uploaded{" "}
+                    {restaurant.certConfiguredAt ? new Date(restaurant.certConfiguredAt).toLocaleDateString() : "previously"}).
+                    You can replace it below.
+                  </span>
+                </div>
+              )}
+
+              {/* Mode toggle */}
+              <div>
+                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Certificate format</p>
+                <div className="inline-flex rounded-xl border border-gray-200 bg-gray-50 p-1 gap-1">
+                  {(["crt", "p12"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => { setCertMode(mode); setCertFile(null); setCertError(""); }}
+                      className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        certMode === mode
+                          ? "bg-white text-gray-900 shadow-sm border border-gray-200"
+                          : "text-gray-500 hover:text-gray-700"
+                      }`}
+                    >
+                      {mode === "crt" ? "Signed .crt file (recommended)" : ".p12 / .pfx bundle"}
                     </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* CRT mode */}
+              {certMode === "crt" && (
+                <div className="space-y-3">
+                  <Notice variant="info">
+                    The server will combine the signed .crt with your private key from step 2 to create the certificate bundle internally.
+                  </Notice>
+                  <FormField label="Signed .crt from SRC">
+                    <FileInput
+                      accept=".crt"
+                      value={certFile}
+                      onChange={(f) => { setCertFile(f); setCertError(""); }}
+                      placeholder="Choose .crt file"
+                    />
+                  </FormField>
+                </div>
+              )}
+
+              {/* P12 mode */}
+              {certMode === "p12" && (
+                <div className="space-y-3">
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-4">
+                    <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Combine .crt + key into .p12</p>
+                    <code className="block text-xs font-mono text-gray-600 break-all leading-relaxed">
+                      openssl pkcs12 -export -in {restaurant.tin}.crt -inkey {restaurant.tin}.key.pem -out {restaurant.tin}.p12
+                    </code>
+                  </div>
+                  <FormField label=".p12 or .pfx file">
+                    <FileInput
+                      accept=".p12,.pfx"
+                      value={certFile}
+                      onChange={(f) => { setCertFile(f); setCertError(""); }}
+                      placeholder="Choose .p12 or .pfx file"
+                    />
+                  </FormField>
+                  <FormField label="Certificate password">
+                    <input
+                      type="password"
+                      value={certPassword}
+                      onChange={(e) => { setCertPassword(e.target.value); setCertError(""); }}
+                      placeholder="Password used when creating the .p12"
+                      className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    />
+                  </FormField>
+                </div>
+              )}
+
+              {certError && <InlineError message={certError} />}
+
+              {(loading || autoConfigLoading) && (
+                <div className="flex items-center gap-3 px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
+                  <Spinner size="sm" />
+                  <span>{loading ? "Uploading certificate…" : "Running auto-setup (CRN · Department · Cashier · ECR)…"}</span>
+                </div>
+              )}
+
+              <ResultBanner result={result} />
+
+              <ActionBar
+                onBack={() => goTo(3)}
+                onPrimary={certMode === "p12" ? doUploadP12 : doUploadCrt}
+                primaryLabel={certMode === "crt" ? "Upload certificate & auto-configure" : "Upload .p12 & auto-configure"}
+                primaryLoading={loading || autoConfigLoading}
+              />
+
+              {restaurant.hasCert && !loading && !autoConfigLoading && (
+                <button
+                  onClick={() => { runAutoConfig().then(() => goTo(5)); }}
+                  className="text-sm text-blue-600 hover:text-blue-700 hover:underline"
+                >
+                  Re-run auto-configuration →
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 5: Auto-Setup Status ── */}
+          {step === 5 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                After your certificate is uploaded, everything below is configured automatically — no manual input required.
+              </p>
+
+              {autoConfigLoading && (
+                <div className="flex items-center gap-3 px-4 py-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700">
+                  <Spinner size="sm" />
+                  <span>Running auto-configuration… This may take 10–30 seconds.</span>
+                </div>
+              )}
+
+              {!autoConfig && !autoConfigLoading && (
+                <div className="px-4 py-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+                  Auto-configuration has not run yet.{" "}
+                  {restaurant.hasCert ? (
+                    <button onClick={() => runAutoConfig()} className="font-semibold underline">Run it now →</button>
+                  ) : (
+                    "Upload your certificate in step 4 first."
                   )}
                 </div>
-              ))}
-            </div>
-            <div className="flex gap-2 mb-6">
-              <Link href="/receipts/new" className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700">
-                Create test receipt →
-              </Link>
-              <Link href={`/admin/restaurants/${restaurant.id}`} className="px-4 py-2 border border-gray-300 rounded-lg text-sm text-gray-700 hover:bg-gray-50">
-                Restaurant dashboard
-              </Link>
-            </div>
-            {isReallyComplete ? (
-              <div className="bg-green-50 border border-green-200 rounded-xl p-5 text-center">
-                <div className="text-3xl mb-2">✓</div>
-                <h3 className="font-semibold text-green-900 mb-1">Ready for live fiscalization</h3>
-                <p className="text-sm text-green-700">
-                  All required steps are complete.
-                  {restaurant.isMockMode && " (MOCK MODE — set TAX_API_MODE=src_real and deploy with a static outbound IP for production.)"}
-                </p>
+              )}
+
+              {autoConfig && (
+                <div className="space-y-2.5">
+                  <ConfigRow
+                    label="Cash Register Number (CRN)"
+                    value={autoConfig.crn}
+                    sourceLabel={
+                      autoConfig.crnSource === "certificate" ? "Extracted from certificate"
+                      : autoConfig.crnSource === "database" ? "On file"
+                      : autoConfig.crnSource === "mock-auto" ? "Auto-assigned (mock mode)"
+                      : null
+                    }
+                    error={autoConfig.crnError}
+                    isMock={autoConfig.isMockMode}
+                  />
+                  <ConfigRow
+                    label="Department"
+                    value={autoConfig.department
+                      ? `${autoConfig.department.name} — ID ${autoConfig.department.taxDepartmentId} — Tax regime ${autoConfig.department.taxRegime}`
+                      : null}
+                    sourceLabel={autoConfig.department ? "Created" : null}
+                    error={autoConfig.departmentError}
+                    isMock={false}
+                  />
+                  <ConfigRow
+                    label="Cashier"
+                    value={autoConfig.cashier
+                      ? `${autoConfig.cashier.name} — Tax ID ${autoConfig.cashier.taxCashierId}`
+                      : null}
+                    sourceLabel={autoConfig.cashier ? "Created" : null}
+                    error={autoConfig.cashierError}
+                    isMock={false}
+                  />
+                  <ConfigRow
+                    label="SRC Connection (mTLS)"
+                    value={autoConfig.connected ? "Connected — certificate accepted by SRC" : null}
+                    sourceLabel={autoConfig.connected ? "Verified" : null}
+                    error={autoConfig.connectionError}
+                    isMock={autoConfig.isMockMode}
+                  />
+                  <ConfigRow
+                    label="ECR Activation"
+                    value={autoConfig.activated ? "ECR activated successfully" : null}
+                    sourceLabel={autoConfig.activated ? "Activated" : null}
+                    error={autoConfig.activationError}
+                    isMock={autoConfig.isMockMode}
+                  />
+                </div>
+              )}
+
+              <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-500 leading-relaxed">
+                <strong className="text-gray-600">Note on cashier ID:</strong> The SRC API has no endpoint to fetch cashier data. SRC assigns ID&nbsp;1 to the first cashier registered during u6 approval, which is used automatically.
               </div>
-            ) : (
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                <strong>Not yet complete.</strong> Finish all items in the checklist above before going live.
+
+              {autoConfig?.crnError && (
+                <Notice variant="error">
+                  <strong>CRN error:</strong> {autoConfig.crnError}
+                </Notice>
+              )}
+
+              <ResultBanner result={result} />
+
+              <div className="flex flex-wrap gap-2">
+                <GhostButton onClick={() => goTo(4)} label="← Back to certificate upload" />
+                {restaurant.hasCert && (
+                  <GhostButton
+                    onClick={() => runAutoConfig()}
+                    label={autoConfigLoading ? "Running…" : "Re-run auto-configuration"}
+                    disabled={autoConfigLoading}
+                  />
+                )}
               </div>
-            )}
-          </div>
-        )}
+
+              {autoConfig && !autoConfig.crnError && (
+                <ActionBar
+                  onNext={() => goTo(6)}
+                  nextLabel="Continue to products →"
+                />
+              )}
+            </div>
+          )}
+
+          {/* ── Step 6: Products ── */}
+          {step === 6 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                Add at least one product. Every fiscal receipt line requires a good code and ADG code assigned by SRC. Fetch the catalogue to auto-fill codes.
+              </p>
+
+              {/* SRC product catalogue */}
+              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-700">SRC product catalogue</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Fetch available product codes from the tax authority</p>
+                  </div>
+                  <button
+                    onClick={doFetchGoodList}
+                    disabled={goodListLoading || !restaurant.crn}
+                    className="px-3.5 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
+                  >
+                    {goodListLoading ? (
+                      <span className="flex items-center gap-1.5"><Spinner size="xs" /> Fetching…</span>
+                    ) : "Fetch codes"}
+                  </button>
+                </div>
+
+                {goodListError && (
+                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{goodListError}</p>
+                )}
+
+                {goodList.length > 0 && (
+                  <div>
+                    <p className="text-xs text-gray-500 mb-1.5">{goodList.length} items — select one to auto-fill the form:</p>
+                    <select
+                      size={Math.min(goodList.length, 5)}
+                      onChange={(e) => { const g = goodList[Number(e.target.value)]; if (g) selectGoodCode(g); }}
+                      className="w-full text-xs border border-gray-200 rounded-lg p-2 font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      defaultValue=""
+                    >
+                      <option value="" disabled>— select a product —</option>
+                      {goodList.map((g, i) => (
+                        <option key={i} value={i}>{g.goodCode} — {g.goodName} ({g.price} AMD)</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {restaurant.products.length > 0 && (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>{restaurant.products.length} product{restaurant.products.length !== 1 ? "s" : ""} already added.</span>
+                </div>
+              )}
+
+              {/* Product form */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="col-span-2">
+                  <FormField label="Product name" hint="Max 50 characters">
+                    <input
+                      value={prodName}
+                      onChange={(e) => setProdName(e.target.value)}
+                      maxLength={50}
+                      placeholder="e.g. Margherita Pizza"
+                      className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    />
+                  </FormField>
+                </div>
+                <FormField label="Good code" required>
+                  <input
+                    value={prodGoodCode}
+                    onChange={(e) => setProdGoodCode(e.target.value)}
+                    placeholder="e.g. 2106-90"
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
+                <FormField label="ADG code" required>
+                  <input
+                    value={prodAdgCode}
+                    onChange={(e) => setProdAdgCode(e.target.value)}
+                    placeholder="e.g. 2106"
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
+                <FormField label="Unit of measure">
+                  <input
+                    value={prodUnit}
+                    onChange={(e) => setProdUnit(e.target.value)}
+                    placeholder="piece"
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
+                <FormField label="Price (AMD)" required>
+                  <input
+                    value={prodPrice}
+                    onChange={(e) => setProdPrice(e.target.value)}
+                    placeholder="3500"
+                    type="number"
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                  />
+                </FormField>
+                {restaurant.departments.length > 0 && (
+                  <div className="col-span-2">
+                    <FormField label="Department">
+                      <select
+                        value={prodDeptId}
+                        onChange={(e) => setProdDeptId(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      >
+                        {restaurant.departments.map((d) => (
+                          <option key={d.id} value={d.id}>{d.name} (ID: {d.taxDepartmentId})</option>
+                        ))}
+                      </select>
+                    </FormField>
+                  </div>
+                )}
+              </div>
+
+              <ResultBanner result={result} />
+
+              <div className="flex flex-wrap gap-2 items-center">
+                <GhostButton onClick={() => goTo(5)} label="← Back" />
+                <PrimaryButton onClick={doAddProduct} loading={loading} label="Add product" />
+                {restaurant.products.length > 0 && (
+                  <button onClick={() => goTo(7)} className="text-sm text-blue-600 hover:underline ml-1">
+                    Skip — already have products
+                  </button>
+                )}
+              </div>
+
+              {result?.ok && (
+                <ActionBar onNext={() => goTo(7)} nextLabel="Continue to API key →" />
+              )}
+            </div>
+          )}
+
+          {/* ── Step 7: API Key ── */}
+          {step === 7 && (
+            <div className="space-y-5">
+              <p className="text-sm text-gray-600">
+                Generate an API key to authenticate your point-of-sale system. Copy it immediately — it is only shown once.
+              </p>
+
+              {restaurant.hasApiKey && !apiKey && (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>An API key already exists for this account. Generate a new one below if needed.</span>
+                </div>
+              )}
+
+              <ResultBanner result={result} />
+
+              {apiKey ? (
+                <div className="space-y-3">
+                  <div className="bg-gray-900 rounded-xl p-4 flex items-start gap-3">
+                    <code className="text-emerald-400 text-xs font-mono flex-1 break-all leading-relaxed">{apiKey}</code>
+                    <button
+                      onClick={copyKey}
+                      className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                        keyCopied
+                          ? "bg-emerald-600 text-white"
+                          : "bg-gray-700 text-gray-200 hover:bg-gray-600"
+                      }`}
+                    >
+                      {keyCopied ? "Copied!" : "Copy"}
+                    </button>
+                  </div>
+                  <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-4 py-3">
+                    <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+                    </svg>
+                    <span>Send this key as the <code className="font-mono bg-amber-100 px-1 rounded">X-Api-Key</code> header in all POS API requests. It will not be shown again.</span>
+                  </div>
+                  <ActionBar onNext={() => { advanceDbStep(11); goTo(8); }} nextLabel="Continue to completion →" />
+                </div>
+              ) : (
+                <ActionBar
+                  onBack={() => goTo(6)}
+                  onPrimary={doGenerateApiKey}
+                  primaryLabel="Generate API key"
+                  primaryLoading={loading}
+                />
+              )}
+
+              {(apiKey || restaurant.hasApiKey) && !apiKey && (
+                <button onClick={() => { advanceDbStep(11); goTo(8); }} className="text-sm text-blue-600 hover:underline">
+                  Skip — already have a key →
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* ── Step 8: Complete ── */}
+          {step === 8 && (
+            <div className="space-y-6">
+              {/* Completion state */}
+              {isReallyComplete ? (
+                <div className="text-center py-6">
+                  <div className="w-16 h-16 rounded-full bg-emerald-100 flex items-center justify-center mx-auto mb-4">
+                    <svg className="w-8 h-8 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-900 mb-1">Ready for live fiscalization</h3>
+                  <p className="text-sm text-gray-500 max-w-sm mx-auto">
+                    All required steps are complete.
+                    {restaurant.isMockMode && (
+                      <span className="block mt-2 text-amber-600">
+                        Set <code className="font-mono text-xs bg-amber-50 px-1 rounded">TAX_API_MODE=src_real</code> and deploy with a static outbound IP to go live.
+                      </span>
+                    )}
+                  </p>
+                </div>
+              ) : (
+                <div className="px-4 py-4 bg-amber-50 border border-amber-200 rounded-xl text-sm text-amber-800">
+                  Complete all items in the checklist below before going live.
+                </div>
+              )}
+
+              {/* Readiness checklist */}
+              <div className="border border-gray-200 rounded-xl overflow-hidden">
+                <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Readiness checklist</p>
+                </div>
+                {[
+                  { label: "Certificate uploaded",     ok: restaurant.hasCert,                    fix: 4 },
+                  { label: "Auto-configuration complete", ok: !!autoConfig && !autoConfig.crnError, fix: 5 },
+                  { label: "Products added",            ok: restaurant.products.length > 0,        fix: 6 },
+                  { label: "API key generated",         ok: restaurant.hasApiKey,                  fix: 7 },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    className={`flex items-center justify-between px-4 py-3.5 border-b border-gray-100 last:border-0 transition-colors ${
+                      item.ok ? "bg-white" : "bg-red-50"
+                    }`}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center ${
+                        item.ok ? "bg-emerald-100" : "bg-red-100"
+                      }`}>
+                        {item.ok ? (
+                          <svg className="w-3 h-3 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                        ) : (
+                          <svg className="w-3 h-3 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                      </div>
+                      <span className={`text-sm ${item.ok ? "text-gray-700" : "text-red-700 font-medium"}`}>
+                        {item.label}
+                      </span>
+                    </div>
+                    {!item.ok && (
+                      <button
+                        onClick={() => goTo(item.fix)}
+                        className="text-xs text-blue-600 font-semibold hover:underline"
+                      >
+                        Complete step {item.fix} →
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Actions */}
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href="/receipts/new"
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 transition-colors shadow-sm"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Create test receipt
+                </Link>
+                <Link
+                  href={`/admin/restaurants/${restaurant.id}`}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors"
+                >
+                  Restaurant dashboard
+                </Link>
+              </div>
+            </div>
+          )}
+
+        </div>
       </div>
     </div>
   );
 }
 
-// ── Sub-components ─────────────────────────────────────────────────────────────
+// ── Design system components ────────────────────────────────────────────────────
 
-function StepButton({ onClick, loading, label }: { onClick: () => void; loading?: boolean; label: string }) {
+function Spinner({ size = "sm" }: { size?: "xs" | "sm" }) {
+  const sz = size === "xs" ? "w-3 h-3" : "w-4 h-4";
   return (
-    <button onClick={onClick} disabled={loading}
-      className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors">
-      {loading ? "Working…" : label}
-    </button>
+    <svg className={`${sz} animate-spin text-current`} fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+    </svg>
+  );
+}
+
+function FormField({ label, children, hint, required }: { label: string; children: React.ReactNode; hint?: string; required?: boolean }) {
+  return (
+    <div>
+      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+        {label}{required && <span className="text-red-400 ml-0.5">*</span>}
+        {hint && <span className="ml-1 text-gray-400 normal-case font-normal tracking-normal">— {hint}</span>}
+      </label>
+      {children}
+    </div>
+  );
+}
+
+function FileInput({ accept, value, onChange, placeholder }: {
+  accept: string;
+  value: File | null;
+  onChange: (f: File | null) => void;
+  placeholder: string;
+}) {
+  return (
+    <label className={`flex items-center gap-3 border-2 border-dashed rounded-xl px-4 py-3.5 cursor-pointer transition-colors ${
+      value ? "border-emerald-300 bg-emerald-50" : "border-gray-200 bg-gray-50 hover:border-blue-300 hover:bg-blue-50/30"
+    }`}>
+      <input
+        type="file"
+        accept={accept}
+        onChange={(e) => onChange(e.target.files?.[0] ?? null)}
+        className="sr-only"
+      />
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${value ? "bg-emerald-100" : "bg-white border border-gray-200"}`}>
+        {value ? (
+          <svg className="w-4 h-4 text-emerald-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ) : (
+          <svg className="w-4 h-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+        )}
+      </div>
+      <div className="min-w-0">
+        {value ? (
+          <>
+            <p className="text-sm font-medium text-emerald-700 truncate">{value.name}</p>
+            <p className="text-xs text-emerald-600">{(value.size / 1024).toFixed(1)} KB</p>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-gray-500">{placeholder}</p>
+            <p className="text-xs text-gray-400">Click to browse</p>
+          </>
+        )}
+      </div>
+    </label>
+  );
+}
+
+function InlineError({ message }: { message: string }) {
+  return (
+    <div className="flex items-start gap-2 mt-2 text-xs text-red-600">
+      <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-8-5a.75.75 0 01.75.75v4.5a.75.75 0 01-1.5 0v-4.5A.75.75 0 0110 5zm0 10a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+      </svg>
+      <span>{message}</span>
+    </div>
   );
 }
 
 function ResultBanner({ result }: { result: { ok: boolean; message: string } | null }) {
   if (!result) return null;
   return (
-    <div className={`mb-3 px-4 py-3 rounded-lg text-sm ${result.ok ? "bg-green-50 border border-green-200 text-green-800" : "bg-red-50 border border-red-200 text-red-800"}`}>
-      {result.ok ? "✓ " : "✗ "}{result.message}
+    <div className={`flex items-start gap-3 px-4 py-3.5 rounded-xl border text-sm ${
+      result.ok
+        ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+        : "bg-red-50 border-red-200 text-red-800"
+    }`}>
+      <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+        result.ok ? "bg-emerald-200" : "bg-red-200"
+      }`}>
+        {result.ok ? (
+          <svg className="w-3 h-3 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        ) : (
+          <svg className="w-3 h-3 text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        )}
+      </div>
+      <span>{result.message}</span>
     </div>
   );
 }
 
-type CrnSource = "certificate" | "database" | "mock-auto" | null;
+function Notice({ variant, children }: { variant: "info" | "warning" | "error"; children: React.ReactNode }) {
+  const styles = {
+    info:    { wrap: "bg-blue-50 border-blue-200 text-blue-700",   icon: "text-blue-500" },
+    warning: { wrap: "bg-amber-50 border-amber-200 text-amber-800", icon: "text-amber-500" },
+    error:   { wrap: "bg-red-50 border-red-200 text-red-800",      icon: "text-red-500" },
+  }[variant];
 
-const SOURCE_LABELS: Record<NonNullable<CrnSource>, string> = {
-  "certificate": "extracted from SRC certificate",
-  "database":    "already on file",
-  "mock-auto":   "auto-assigned (mock mode)",
-};
+  const icons = {
+    info: (
+      <svg className={`w-4 h-4 shrink-0 mt-0.5 ${styles.icon}`} fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z" clipRule="evenodd" />
+      </svg>
+    ),
+    warning: (
+      <svg className={`w-4 h-4 shrink-0 mt-0.5 ${styles.icon}`} fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
+      </svg>
+    ),
+    error: (
+      <svg className={`w-4 h-4 shrink-0 mt-0.5 ${styles.icon}`} fill="currentColor" viewBox="0 0 20 20">
+        <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" />
+      </svg>
+    ),
+  }[variant];
 
-function AutoConfigRow({ label, value, source, error, isMock }: {
+  return (
+    <div className={`flex items-start gap-3 px-4 py-3.5 rounded-xl border text-sm ${styles.wrap}`}>
+      {icons}
+      <div>{children}</div>
+    </div>
+  );
+}
+
+function PrimaryButton({ onClick, loading, label }: { onClick: () => void; loading?: boolean; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={loading}
+      className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white rounded-xl text-sm font-semibold hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm"
+    >
+      {loading && <Spinner size="sm" />}
+      {loading ? "Working…" : label}
+    </button>
+  );
+}
+
+function SecondaryButton({ onClick, label, icon }: { onClick: () => void; label: string; icon?: React.ReactNode }) {
+  return (
+    <button
+      onClick={onClick}
+      className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors shadow-sm"
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function GhostButton({ onClick, label, disabled }: { onClick: () => void; label: string; disabled?: boolean }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className="inline-flex items-center gap-1 px-4 py-2.5 text-sm text-gray-500 hover:text-gray-700 rounded-xl hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+    >
+      {label}
+    </button>
+  );
+}
+
+function ActionBar({
+  onBack, onPrimary, primaryLabel, primaryLoading, onNext, nextLabel,
+}: {
+  onBack?: () => void;
+  onPrimary?: () => void;
+  primaryLabel?: string;
+  primaryLoading?: boolean;
+  onNext?: () => void;
+  nextLabel?: string;
+}) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      {onBack && <GhostButton onClick={onBack} label="← Back" />}
+      {onPrimary && primaryLabel && (
+        <PrimaryButton onClick={onPrimary} loading={primaryLoading} label={primaryLabel} />
+      )}
+      {onNext && nextLabel && (
+        <button onClick={onNext} className="text-sm text-blue-600 font-medium hover:underline ml-1">
+          {nextLabel}
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ConfigRow({ label, value, sourceLabel, error, isMock }: {
   label: string;
   value: string | null;
-  source: CrnSource | string | null;
+  sourceLabel: string | null;
   error: string | null;
   isMock: boolean;
 }) {
   if (error) {
     return (
-      <div className="flex gap-3 items-start px-3 py-2 bg-red-50 border border-red-200 rounded-lg">
-        <span className="text-red-500 text-base leading-5 shrink-0">✗</span>
+      <div className="flex items-start gap-3 px-4 py-3.5 bg-red-50 border border-red-200 rounded-xl">
+        <div className="w-5 h-5 rounded-full bg-red-200 flex items-center justify-center shrink-0 mt-0.5">
+          <svg className="w-3 h-3 text-red-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </div>
         <div>
-          <div className="text-sm font-medium text-red-800">{label}</div>
-          <div className="text-xs text-red-600 mt-0.5">{error}</div>
+          <p className="text-sm font-semibold text-red-800">{label}</p>
+          <p className="text-xs text-red-600 mt-0.5">{error}</p>
         </div>
       </div>
     );
   }
+
   if (value) {
-    const srcLabel = source && SOURCE_LABELS[source as NonNullable<CrnSource>];
     return (
-      <div className="flex gap-3 items-start px-3 py-2 bg-green-50 border border-green-200 rounded-lg">
-        <span className="text-green-600 text-base leading-5 shrink-0">✓</span>
-        <div>
-          <div className="text-sm font-medium text-green-800">{label}</div>
-          <div className="text-xs text-green-700 mt-0.5 font-mono">{value}</div>
-          {srcLabel && (
-            <div className="text-xs text-green-600 mt-0.5">
-              {srcLabel}{isMock && source === "mock-auto" ? " — real SRC call not attempted" : ""}
-            </div>
+      <div className="flex items-start gap-3 px-4 py-3.5 bg-emerald-50 border border-emerald-200 rounded-xl">
+        <div className="w-5 h-5 rounded-full bg-emerald-200 flex items-center justify-center shrink-0 mt-0.5">
+          <svg className="w-3 h-3 text-emerald-700" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+          </svg>
+        </div>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-emerald-800">{label}</p>
+          <p className="text-xs font-mono text-emerald-700 mt-0.5 break-all">{value}</p>
+          {sourceLabel && (
+            <p className="text-xs text-emerald-600 mt-0.5">
+              {sourceLabel}{isMock ? " (mock mode)" : ""}
+            </p>
           )}
         </div>
       </div>
     );
   }
+
   return (
-    <div className="flex gap-3 items-start px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg">
-      <span className="text-gray-400 text-base leading-5 shrink-0">—</span>
+    <div className="flex items-start gap-3 px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl">
+      <div className="w-5 h-5 rounded-full bg-gray-200 flex items-center justify-center shrink-0 mt-0.5">
+        <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+      </div>
       <div>
-        <div className="text-sm font-medium text-gray-500">{label}</div>
-        <div className="text-xs text-gray-400 mt-0.5">Not yet configured</div>
+        <p className="text-sm font-medium text-gray-500">{label}</p>
+        <p className="text-xs text-gray-400 mt-0.5">Not yet configured</p>
       </div>
     </div>
   );
