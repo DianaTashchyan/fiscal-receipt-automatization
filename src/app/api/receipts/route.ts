@@ -3,6 +3,7 @@ import { createHash } from "crypto";
 import prisma from "@/lib/prisma/client";
 import { PaymentMethod, DeliveryMethod, ReceiptStatus } from "@prisma/client";
 import { registerSaleInTaxApi } from "@/lib/services/tax-api.service";
+import { money } from "@/lib/src/validation";
 
 const PAGE_SIZE = 50;
 
@@ -41,14 +42,25 @@ export async function POST(req: NextRequest) {
     const keyHash = hashApiKey(apiKey);
     const restaurantApiKey = await prisma.restaurantApiKey.findUnique({
       where: { keyHash },
-      include: { restaurant: true },
+      include: {
+        restaurant: {
+          select: {
+            id: true,
+            name: true,
+            tin: true,
+            crn: true,
+            srcCertData: true,
+            srcCertPassword: true,
+            srcCertPath: true,
+          },
+        },
+      },
     });
 
     if (!restaurantApiKey || !restaurantApiKey.isActive) {
       return NextResponse.json({ error: "Invalid or inactive API key" }, { status: 401 });
     }
 
-    // fire-and-forget lastUsedAt update
     prisma.restaurantApiKey
       .update({ where: { id: restaurantApiKey.id }, data: { lastUsedAt: new Date() } })
       .catch(console.error);
@@ -57,10 +69,15 @@ export async function POST(req: NextRequest) {
     const {
       externalOrderId,
       tableNumber,
-      billAmount,
-      tipAmount = 0,
-      totalAmount,
+      billAmount,     // items total (no tip) — sent to SRC as the payment amount
+      tipAmount = 0,  // gratuity, stored in DB but NOT fiscalized
+      totalAmount,    // billAmount + tipAmount, stored in DB
       paymentMethod,
+      // For MIXED: explicit cash/card split (both required when paymentMethod=MIXED)
+      cashAmount: bodyCashAmount,
+      cardAmount: bodyCardAmount,
+      // B2B: buyer TIN (8 digits), null for B2C
+      partnerTin = null,
       deliveryMethod = "NONE",
       customerEmail,
       customerPhone,
@@ -76,10 +93,47 @@ export async function POST(req: NextRequest) {
 
     const validPaymentMethods = ["CASH", "CARD", "MIXED", "ONLINE"];
     if (!validPaymentMethods.includes(paymentMethod)) {
-      return NextResponse.json({ error: `paymentMethod must be one of: ${validPaymentMethods.join(", ")}` }, { status: 400 });
+      return NextResponse.json(
+        { error: `paymentMethod must be one of: ${validPaymentMethods.join(", ")}` },
+        { status: 400 }
+      );
     }
 
-    // idempotency: return existing fiscalized receipt
+    // MIXED requires explicit split — we cannot infer which portion is cash vs card
+    if (paymentMethod === "MIXED") {
+      if (bodyCashAmount === undefined || bodyCardAmount === undefined) {
+        return NextResponse.json(
+          {
+            error:
+              "MIXED payment requires cashAmount and cardAmount fields specifying " +
+              "the exact cash and card portions. Both must be present and must sum to billAmount.",
+          },
+          { status: 400 }
+        );
+      }
+      const splitSum = Number(bodyCashAmount) + Number(bodyCardAmount);
+      if (Math.abs(splitSum - Number(billAmount)) > 0.01) {
+        return NextResponse.json(
+          {
+            error:
+              `cashAmount (${bodyCashAmount}) + cardAmount (${bodyCardAmount}) = ${splitSum} ` +
+              `does not equal billAmount (${billAmount}).`,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Validate partnerTin when present
+    if (partnerTin !== null && partnerTin !== undefined) {
+      if (typeof partnerTin !== "string" || !/^\d{8}$/.test(partnerTin)) {
+        return NextResponse.json(
+          { error: "partnerTin must be a valid 8-digit TIN or null" },
+          { status: 400 }
+        );
+      }
+    }
+
     const existingReceipt = await prisma.receipt.findUnique({
       where: {
         restaurantId_externalOrderId: {
@@ -97,12 +151,22 @@ export async function POST(req: NextRequest) {
       where: { restaurantId: restaurantApiKey.restaurantId, isDefault: true, isActive: true },
     });
     if (!cashier) {
-      return NextResponse.json({ error: "No active default cashier configured for this restaurant" }, { status: 400 });
+      return NextResponse.json(
+        { error: "No active default cashier configured for this restaurant" },
+        { status: 400 }
+      );
     }
 
-    // resolve and validate all products BEFORE touching the DB
+    // Resolve products before touching DB
     const resolvedItems: Array<{
-      product: { id: string; name: string; goodCode: string; adgCode: string; unit: string; department: { taxRegime: string; taxDepartmentId: string } };
+      product: {
+        id: string;
+        name: string;
+        goodCode: string;
+        adgCode: string;
+        unit: string;
+        department: { taxRegime: string; taxDepartmentId: string };
+      };
       externalProductId: string;
       quantity: number;
       unitPrice: number;
@@ -135,7 +199,21 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // create receipt + all items atomically
+    // Compute paidCashAmount / paidCardAmount from the payment split
+    const billAmt = Number(billAmount);
+    const paidCash =
+      paymentMethod === "CASH"
+        ? billAmt
+        : paymentMethod === "MIXED"
+          ? Number(bodyCashAmount)
+          : 0;
+    const paidCard =
+      paymentMethod === "CARD" || paymentMethod === "ONLINE"
+        ? billAmt
+        : paymentMethod === "MIXED"
+          ? Number(bodyCardAmount)
+          : 0;
+
     const { receipt, createdItems } = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
         data: {
@@ -146,6 +224,8 @@ export async function POST(req: NextRequest) {
           billAmount,
           tipAmount,
           totalAmount,
+          paidCashAmount: paidCash,
+          paidCardAmount: paidCard,
           paymentMethod: paymentMethod as PaymentMethod,
           deliveryMethod: deliveryMethod as DeliveryMethod,
           customerEmail,
@@ -182,14 +262,13 @@ export async function POST(req: NextRequest) {
           event: "RECEIPT_CREATED",
           fromStatus: null,
           toStatus: ReceiptStatus.PENDING,
-          payload: { externalOrderId, paymentMethod, totalAmount, itemCount: items.length },
+          payload: { externalOrderId, paymentMethod, billAmount, tipAmount, totalAmount, itemCount: items.length },
         },
       });
 
       return { receipt, createdItems };
     });
 
-    // fiscalize (outside the transaction — SRC call must not hold a DB lock)
     try {
       await prisma.receipt.update({
         where: { id: receipt.id },
@@ -197,9 +276,12 @@ export async function POST(req: NextRequest) {
       });
 
       const taxResult = await registerSaleInTaxApi({
-        crn: restaurantApiKey.restaurant.crn,
+        restaurant: restaurantApiKey.restaurant,
         cashierTaxId: cashier.taxCashierId,
-        totalAmount: String(totalAmount),
+        billAmount: String(money(billAmt)),
+        paidCashAmount: paymentMethod === "MIXED" ? String(paidCash) : undefined,
+        paidCardAmount: paymentMethod === "MIXED" ? String(paidCard) : undefined,
+        partnerTin: partnerTin ?? null,
         customerEmail,
         paymentMethod: paymentMethod as "CASH" | "CARD" | "MIXED" | "ONLINE",
         items: createdItems.map((item) => ({
@@ -207,6 +289,7 @@ export async function POST(req: NextRequest) {
           departmentTaxId: item.departmentTaxId,
           quantity: item.quantity.toString(),
           unitPrice: item.unitPrice.toString(),
+          discountAmount: item.discountAmount.toString(),
           unit: item.unit,
           name: item.name,
           goodCode: item.goodCode,

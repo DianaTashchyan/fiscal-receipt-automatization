@@ -70,6 +70,21 @@ model Restaurant {
   isActive    Boolean            @default(true)
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
+
+  // ---- Per-restaurant SRC certificate (overrides global env cert) ----
+  // Priority: srcCertData > srcCertPath > global env (SRC_CERT_PATH).
+  // srcCertPassword is stored AES-256-GCM encrypted (CERT_ENCRYPTION_KEY).
+  srcCertData      Bytes?    // PKCS#12 binary uploaded via /api/restaurants/:id/src-config
+  srcCertPassword  String?   // encrypted cert password
+  srcCertPath      String?   // alternative: file system path (no DB bytes)
+  srcConfiguredAt  DateTime? // when the cert was last stored
+
+  // ---- CSR / onboarding ----
+  srcPrivateKeyEnc  String?   // RSA private key, AES-256-GCM encrypted with CERT_ENCRYPTION_KEY
+  srcCsrPem         String?   // PEM-format Certificate Signing Request (safe to share)
+  srcCsrCreatedAt   DateTime? // when CSR was generated
+  srcOnboardingStep Int?      @default(0) // 0=new … 9=complete
+
   users       UserRestaurant[]
   apiKeys     RestaurantApiKey[]
   cashiers    Cashier[]
@@ -160,6 +175,13 @@ model Receipt {
   srcChange       Decimal?  @db.Decimal(12, 2)
   srcRawResponse  Json?
   srcMode         String?
+
+  // ---- SRC payment amounts sent in the print request ----
+  // Stored so retry-fiscalization can send the same amounts SRC expects.
+  // paidCashAmount + paidCardAmount = billAmount (never includes tip).
+  paidCashAmount  Decimal?  @db.Decimal(10, 2)
+  paidCardAmount  Decimal?  @db.Decimal(10, 2)
+
   billAmount      Decimal        @db.Decimal(10, 2)
   tipAmount       Decimal        @default(0) @db.Decimal(10, 2)
   totalAmount     Decimal        @db.Decimal(10, 2)

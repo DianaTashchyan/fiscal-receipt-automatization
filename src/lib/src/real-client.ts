@@ -3,18 +3,24 @@
 // Real SRC client. Talks to the taxservice web service over mutual TLS
 // (the PKCS#12 certificate IS the credential — there is no API key).
 //
-// Ported from the boss project's srcEcrClient.js, hardened and typed.
+// Cert resolution happens BEFORE this class is constructed:
+//   - resolveRestaurantCertConfig(restaurant) → RealCertConfig.pfx
+//   - getRealCertConfig() → loads from env SRC_CERT_PATH
+// The constructor receives a fully-resolved RealCertConfig; it never
+// touches the file system. This allows both DB-stored and file-based
+// certs to work identically.
+//
 // Key facts from the manual / README:
 //   - All calls: POST {root}/api/v1.0/{method}, JSON, UTF-8.
 //   - `language` header: hy | en | ru.
 //   - Auth = client certificate presented over TLS; the registered IP must
 //     match the outbound IP or SRC returns 403 UNAUTHORIZED_CONNECTION.
-//   - Node cannot read .jks; we load a PKCS#12 (.p12/.pfx) at SRC_CERT_PATH.
+//   - Node cannot read .jks; we require a PKCS#12 (.p12) buffer.
 //   - Every request includes crn; seq-bearing methods include seq.
 // ============================================================
 
-import https from "https";
 import fs from "fs";
+import https from "https";
 import { URL } from "url";
 import { getRealCertConfig, RealCertConfig } from "./config";
 import { SrcConfigError, SrcError } from "./errors";
@@ -37,18 +43,7 @@ export class RealSrcClient implements ISrcClient {
   private agent: https.Agent;
 
   constructor(cfg?: RealCertConfig) {
-    // Resolving the cert config throws SrcConfigError with the exact
-    // "SRC certificate is missing" / "SRC_CRN is not set" style messages.
     this.cfg = cfg ?? getRealCertConfig();
-
-    let pfx: Buffer;
-    try {
-      pfx = fs.readFileSync(this.cfg.certPath);
-    } catch {
-      throw new SrcConfigError(
-        `SRC certificate is missing or unreadable at SRC_CERT_PATH (${this.cfg.certPath})`
-      );
-    }
 
     let ca: Buffer | undefined;
     if (this.cfg.caCertPath) {
@@ -62,7 +57,7 @@ export class RealSrcClient implements ISrcClient {
     }
 
     this.agent = new https.Agent({
-      pfx,
+      pfx: this.cfg.pfx,
       passphrase: this.cfg.certPassword,
       ca,
       keepAlive: true,
@@ -128,10 +123,6 @@ export class RealSrcClient implements ISrcClient {
     if (json.code !== 0) {
       const errMsg = json.errorMessage || json.message || `SRC error code ${json.code}`;
 
-      // Error 104 = INVALID_SEQ: the seq we sent is ≤ the last accepted by SRC.
-      // This usually means the seq table is out of sync (e.g. after migrating
-      // from another system). Instruct the operator to resync via
-      // GET /api/src/sequence and POST /api/src/sequence.
       if (json.code === 104) {
         throw new SrcError(
           `SRC rejected the request sequence number (INVALID_SEQ, code 104). ` +
@@ -143,7 +134,6 @@ export class RealSrcClient implements ISrcClient {
         );
       }
 
-      // Error 403 / UNAUTHORIZED_CONNECTION: the outbound IP is not registered.
       if (raw.status === 403 || String(json.code) === "403") {
         throw new SrcError(
           `SRC rejected the connection (UNAUTHORIZED_CONNECTION). ` +

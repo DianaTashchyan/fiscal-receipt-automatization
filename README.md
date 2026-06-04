@@ -1,183 +1,165 @@
 # Electronic Fiscal Receipt Service
 
-Backend-first MVP for generating electronic fiscal receipts for restaurants and online services.
+Production-ready backend for generating **Armenian SRC (State Revenue Committee) compliant electronic fiscal receipts** for restaurants and retail.
 
-The service allows a restaurant or external system to create a receipt, fiscalize it through a tax API integration layer, generate a PDF receipt with a QR code, store receipt history, and deliver the receipt to the customer by email or SMS link.
+The service creates receipts, fiscalizes them through the real SRC taxservice web API over mutual TLS, generates PDF receipts with verified QR codes, and delivers them to customers by email.
 
-## Main Features
+---
 
-- Create electronic fiscal receipts from the web interface
-- Store receipt history in PostgreSQL
-- Generate PDF receipts with fiscal data and QR code
-- View receipt details, items, totals, fiscal number, receipt number, and delivery status
-- Send PDF receipt by email in mock mode
-- Send PDF link by SMS in mock mode
-- Multi-restaurant architecture
-- Cashier, department, product, and receipt item models
-- API key based access for external integrations
-- Tax API integration layer with mock mode and VCR-ready structure
-- Event logging for receipt creation, fiscalization, email delivery, and SMS delivery
+## What a company needs to provide
+
+| Item | Where to get it |
+|------|----------------|
+| **TIN** (8-digit ՀVՀՀ) | SRC cabinet → company profile |
+| **CRN** (ՀԴՄ number) | SRC u6 application → ECR registration |
+| **.p12 certificate** | Convert from .jks with `scripts/convert-jks-to-p12.sh` |
+| **Certificate password** | Chosen when running `keytool -importkeystore` |
+| **Server static IP** | Register with SRC (u6 → IP address section 5.2) |
+
+Everything else is implemented and ready.
+
+---
 
 ## Technology Stack
 
-- Next.js
-- TypeScript
-- Prisma ORM
-- PostgreSQL
-- pdf-lib
-- qrcode
-- Node.js
+- **Next.js 16** (App Router, Server Components)
+- **TypeScript** (strict mode, zero errors)
+- **Prisma 6** + **PostgreSQL**
+- **pdf-lib** + **qrcode** — PDF receipt generation
+- **nodemailer** — real SMTP email delivery
+- **jose** — JWT authentication
+- **bcryptjs** — password hashing
+- **zod** — validation
 
-## Project Structure
+---
 
-```text
-src/app
-├── page.tsx                         # Main dashboard
-├── receipts/page.tsx                 # Receipt history
-├── receipts/new/page.tsx             # Create receipt page
-├── receipts/[id]/page.tsx            # Receipt details page
-├── api/receipts/route.ts             # External API for receipt creation
-├── api/receipts/manual/route.ts      # Manual receipt creation from UI
-├── api/receipts/[id]/pdf/route.ts    # PDF generation
-├── api/receipts/[id]/send-email      # Mock email delivery
-└── api/receipts/[id]/send-sms        # Mock SMS delivery
+## Environment Setup
 
-src/lib
-├── prisma/client.ts                  # Prisma client
-└── services/tax-api.service.ts       # Tax API / VCR integration layer
+Copy `.env.example` to `.env` and fill in the required values:
 
-prisma
-└── schema.prisma                     # Database schema
+```bash
+cp .env.example .env
 ```
 
-## Database Models
-
-The MVP uses the following main entities:
-
-- `User`
-- `Restaurant`
-- `RestaurantApiKey`
-- `Cashier`
-- `Department`
-- `Product`
-- `Receipt`
-- `ReceiptItem`
-- `ReceiptEvent`
-
-This structure allows the system to support multiple restaurants, multiple cashiers, product catalogues, fiscal departments, receipt items, and a full audit trail for each receipt.
-
-## Environment Variables
-
-Create a `.env` file in the root directory:
+### Minimum for mock mode (development/demo)
 
 ```env
-DATABASE_URL="postgresql://user@localhost:5432/fiscal_receipt?schema=public"
-
+DATABASE_URL="postgresql://user:password@localhost:5432/fiscal_receipt?schema=public"
+JWT_SECRET="your-secret-here"
 TAX_API_MODE=mock
-VCR_API_BASE_URL=https://vcr.am/api/v1
-VCR_API_KEY=your_vcr_api_key
 ```
 
-For the current MVP, `TAX_API_MODE=mock` is used. In this mode, the service generates mock fiscal numbers, receipt numbers, and QR data without sending data to the real tax system.
+### Minimum for real SRC fiscalization (production)
 
-Real email and SMS providers are not required for the MVP. Email and SMS delivery are currently implemented in mock mode and logged in `ReceiptEvent`.
+```env
+DATABASE_URL="postgresql://..."
+JWT_SECRET="<32+ random chars>"
+TAX_API_MODE=src_real
+
+SRC_TIN=<8-digit TIN>
+SRC_CRN=<cash register number>
+SRC_CERT_PATH=src-certificates/<TIN>/<TIN>.p12
+SRC_CERT_PASSWORD=<p12 password>
+
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=noreply@example.com
+SMTP_PASSWORD=<smtp password>
+SMTP_FROM="Company Name <noreply@example.com>"
+```
+
+---
 
 ## Installation
 
-Install dependencies:
-
 ```bash
 npm install
+npm run db:setup      # run migrations + seed demo data
+npm run dev           # start development server
 ```
 
-Apply Prisma migrations:
+For production:
 
 ```bash
-npx prisma migrate dev
+npm run db:migrate    # apply migrations only (no seed)
+npm run build
+npm start
 ```
 
-Generate Prisma client:
+---
+
+## SRC Setup Sequence (first deployment)
+
+Run these once after deploying with real credentials:
 
 ```bash
-npx prisma generate
+# 1. Test that your certificate and CRN work
+POST /api/src/check-connection   { "crn": "<CRN>" }
+
+# 2. Activate the ECR (must be done before any receipts)
+POST /api/src/activate            { "crn": "<CRN>" }
+
+# 3. Configure tax departments (match your departments in SRC cabinet)
+POST /api/src/configure-departments
+{ "crn": "<CRN>", "departments": [{ "dep": 1, "taxRegime": 1 }] }
+
+# 4. Create your restaurant via API
+POST /api/restaurants
+Authorization: Bearer <jwt>
+{ "name": "...", "tin": "<TIN>", "crn": "<CRN>", "address": "..." }
+
+# 5. Add a cashier (taxCashierId from SRC cabinet)
+POST /api/restaurants/<id>/cashiers
+{ "name": "...", "taxCashierId": "3", "pinCode": "1234", "isDefault": true }
+
+# 6. Add a department
+POST /api/restaurants/<id>/departments
+{ "name": "Main Hall", "taxDepartmentId": "1", "taxRegime": 1, "isDefault": true }
+
+# 7. Add products (goodCode from SRC good list)
+POST /api/restaurants/<id>/products
+{ "departmentId": "...", "name": "...", "goodCode": "2106-90", "adgCode": "2106",
+  "unit": "piece", "price": 3500 }
+
+# 8. Create an API key for the POS system
+POST /api/restaurants/<id>/api-keys
+{ "label": "POS Terminal 1" }
 ```
 
-Run the development server:
+---
 
-```bash
-npm run dev
-```
+## API Reference
 
-Open the application:
-
-```text
-http://localhost:3000
-```
-
-## Main Pages
-
-### Dashboard
-
-```text
-/
-```
-
-Shows the main product overview, statistics, and API usage example.
-
-### Receipt History
-
-```text
-/receipts
-```
-
-Shows all generated receipts, including status, delivery method, fiscal number, total amount, PDF download link, and receipt details link.
-
-### Create Receipt
-
-```text
-/receipts/new
-```
-
-Allows manual receipt creation through the web interface.
-
-### Receipt Details
-
-```text
-/receipts/[id]
-```
-
-Shows full receipt data, QR code, restaurant information, items, totals, PDF link, email delivery button, and SMS delivery button.
-
-## API Endpoints
-
-### Get all receipts
+### Authentication
 
 ```http
-GET /api/receipts
+POST /api/auth/login
+Content-Type: application/json
+
+{ "email": "admin@fiscal.am", "password": "admin123" }
 ```
 
-Returns the list of created receipts.
+Returns `{ token, user }`. Pass the token as `Authorization: Bearer <token>`.
 
-### Create receipt through external API
+### Receipts (POS integration)
 
 ```http
 POST /api/receipts
-Header: X-Api-Key: <restaurant-api-key>
+X-Api-Key: frk_<restaurant-api-key>
 Content-Type: application/json
-```
 
-Example request:
-
-```json
 {
   "externalOrderId": "order-001",
   "tableNumber": "12",
+  "billAmount": 5000,
+  "tipAmount": 500,
+  "totalAmount": 5500,
   "paymentMethod": "CARD",
   "deliveryMethod": "EMAIL",
   "customerEmail": "customer@example.com",
   "items": [
     {
-      "externalProductId": "pizza-001",
+      "externalProductId": "ext-prod-001",
       "quantity": 1,
       "unitPrice": 3500,
       "totalPrice": 3500
@@ -186,90 +168,165 @@ Example request:
 }
 ```
 
-The endpoint validates the API key, finds the restaurant, checks the default cashier, validates products, creates the receipt, creates receipt items, fiscalizes the receipt through the tax API service layer, and stores the event history.
+**Returns:** The fiscalized receipt with `fiscalNumber`, `receiptNumber`, `qrData`, and all SRC response fields.
 
-### Create receipt manually from UI
+**Idempotent:** sending the same `externalOrderId` twice returns the existing receipt.
 
-```http
-POST /api/receipts/manual
+### Management API
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/restaurants` | List accessible restaurants |
+| POST | `/api/restaurants` | Create restaurant |
+| GET | `/api/restaurants/:id` | Get restaurant details |
+| PATCH | `/api/restaurants/:id` | Update TIN, CRN, name, address |
+| GET | `/api/restaurants/:id/cashiers` | List cashiers |
+| POST | `/api/restaurants/:id/cashiers` | Create cashier |
+| GET | `/api/restaurants/:id/departments` | List departments |
+| POST | `/api/restaurants/:id/departments` | Create department |
+| GET | `/api/restaurants/:id/products` | List products |
+| POST | `/api/restaurants/:id/products` | Create product |
+| GET | `/api/restaurants/:id/api-keys` | List API keys |
+| POST | `/api/restaurants/:id/api-keys` | Create API key |
+| DELETE | `/api/restaurants/:id/api-keys` | Revoke API key |
+| GET | `/api/restaurants/:id/src-config` | Cert status (source, configuredAt — never returns bytes) |
+| POST | `/api/restaurants/:id/src-config` | Upload cert (`certBase64` or `certPath`) + password |
+| DELETE | `/api/restaurants/:id/src-config` | Remove restaurant cert (falls back to global env) |
+
+### SRC Direct Methods
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/src/check-connection` | Test mTLS connection |
+| POST | `/api/src/activate` | Activate ECR (once) |
+| POST | `/api/src/configure-departments` | Configure tax departments |
+| POST | `/api/src/get-good-list` | Fetch SRC product catalog |
+| POST | `/api/src/print` | Print receipt directly |
+| POST | `/api/src/print-copy` | Print receipt copy |
+| POST | `/api/src/get-returned-receipt-info` | Get receipt for return |
+| POST | `/api/src/print-return-receipt` | Issue return receipt |
+| GET | `/api/src/sequence` | Inspect seq counter |
+| POST | `/api/src/sequence` | Override seq counter (migration) |
+| POST | `/api/src/validate-company` | Full readiness checklist |
+
+### Utility
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/health` | Health check (DB + SRC config) |
+| GET | `/api/receipts/:id/pdf` | Download PDF receipt |
+| POST | `/api/receipts/:id/send-email` | Send PDF by email |
+| POST | `/api/receipts/:id/retry-fiscalization` | Retry failed receipt |
+
+---
+
+## Database Schema
+
+| Model | Purpose |
+|-------|---------|
+| `User` | Admin/manager accounts |
+| `Restaurant` | Company unit (holds TIN + CRN) |
+| `Cashier` | Cashier (taxCashierId from SRC) |
+| `Department` | Tax department (taxDepartmentId + taxRegime) |
+| `Product` | SKU (goodCode + adgCode from SRC) |
+| `Receipt` | Fiscal receipt with full SRC response fields |
+| `ReceiptItem` | Individual line items |
+| `ReceiptEvent` | Audit trail for every status change |
+| `RestaurantApiKey` | Hashed API keys for POS systems |
+| `SrcSequence` | Persistent, atomic `seq` counter per CRN |
+
+---
+
+## Certificate Setup
+
+### Step 1 — Convert the SRC-issued keystore to PKCS#12
+
+The SRC registration process produces a Java keystore (`.jks`). Node's TLS stack cannot read `.jks` — convert once:
+
+```bash
+# Generate CSR and create keystore (run ONCE before SRC registration)
+./scripts/generate-src-csr.sh <TIN>
+
+# After SRC signs the certificate, import it
+./scripts/import-src-cert.sh <TIN>
+
+# Convert to PKCS#12 for Node
+./scripts/convert-jks-to-p12.sh <TIN> <jks-password> <p12-password>
 ```
 
-Used by the internal web interface for manual receipt creation.
+### Step 2 — Store the certificate per restaurant (recommended)
 
-### Generate PDF
+Upload the PKCS#12 bytes directly to the restaurant's record so each company carries its own cert independent of server env:
 
-```http
-GET /api/receipts/{id}/pdf
+```bash
+# Encode the .p12 file to base64
+CERT_B64=$(base64 -i src-certificates/<TIN>/<TIN>.p12)
+
+# Upload via the management API
+curl -X POST https://<host>/api/restaurants/<restaurantId>/src-config \
+  -H "Authorization: Bearer <jwt>" \
+  -H "Content-Type: application/json" \
+  -d "{\"certBase64\": \"$CERT_B64\", \"certPassword\": \"<p12-password>\"}"
 ```
 
-Generates and returns a PDF receipt with restaurant data, fiscal number, receipt number, items, totals, and QR code.
+The endpoint validates the cert (wrong password → 422) and stores it AES-256-GCM encrypted in the DB using `CERT_ENCRYPTION_KEY`.
 
-### Send receipt by email
+### Alternative — Global env cert (single-company deployments)
 
-```http
-POST /api/receipts/{id}/send-email
+Set these env vars to use one cert for all restaurants (falls back when no restaurant cert is stored):
+
+```env
+SRC_CERT_PATH=src-certificates/<TIN>/<TIN>.p12
+SRC_CERT_PASSWORD=<p12-password>
+CERT_ENCRYPTION_KEY=<32+ random chars>
 ```
 
-Current MVP behavior: mock email sending. The system saves the customer email, updates the delivery method, and creates an `EMAIL_SENT_MOCK` event.
+### Certificate resolution priority (per receipt)
 
-### Send receipt by SMS
-
-```http
-POST /api/receipts/{id}/send-sms
+```
+Restaurant.srcCertData (bytes in DB)
+  ↓ if not set
+Restaurant.srcCertPath (file path in DB)
+  ↓ if not set
+SRC_CERT_PATH + SRC_CERT_PASSWORD (global env)
+  ↓ if not set
+SrcConfigError → receipt fails with clear message
 ```
 
-Current MVP behavior: mock SMS sending. The system saves the customer phone, updates the delivery method, and creates an `SMS_SENT_MOCK` event with the PDF link.
+---
 
-## Tax API Integration
+## Sequence Number Management
 
-The service contains a separate tax integration layer:
+SRC requires a strictly increasing `seq` per CRN. If you migrate from another system, sync the counter:
 
-```text
-src/lib/services/tax-api.service.ts
+```bash
+# Check current counter
+GET /api/src/sequence?crn=<CRN>
+
+# Set to last seq SRC accepted (next call will use value+1)
+POST /api/src/sequence
+{ "crn": "<CRN>", "value": 1234 }
 ```
 
-In mock mode, it returns generated fiscal data:
+---
 
-- fiscal number
-- receipt number
-- QR data
-- raw response object
+## Current Limitations
 
-The structure is prepared for real VCR / tax API integration. When real credentials are provided, the service can send sale data to the configured VCR API endpoint.
+- **SMS delivery**: not wired up. Endpoint returns 501 with setup instructions. Install Twilio or another provider and implement `src/app/api/receipts/[id]/send-sms/route.ts`.
+- **Multi-company certificates**: the real client reads certificate path/password from env. To support multiple companies each with their own certificate, extend `RealSrcClient` to accept per-restaurant cert config stored in the DB.
+- **Server IP registration**: the outbound IP of the deployed server must be registered with SRC (u6 application → IP address). On platforms like Render, use a static outbound IP add-on.
 
-## Current MVP Limitations
+---
 
-- Tax API integration is currently running in mock mode
-- Email delivery is currently mocked
-- SMS delivery is currently mocked
-- Authentication and user login are not implemented yet
-- Restaurant and product management pages can be improved further
-- Production deployment configuration is not included yet
+## Scripts
 
-## Future Improvements
-
-- Connect real VCR / tax API credentials
-- Connect real SMTP provider for email delivery
-- Connect real SMS provider
-- Add authentication and role-based access
-- Add restaurant management UI
-- Add product and department management UI
-- Add filtering and search in receipt history
-- Add export reports
-- Add deployment configuration
-- Add tests for receipt creation and fiscalization flow
-
-## Demo Flow
-
-1. Open the dashboard at `/`
-2. Click `Create Receipt`
-3. Choose restaurant, payment method, customer email or phone, and receipt items
-4. Create the receipt
-5. Open the receipt details page
-6. Open or download the generated PDF
-7. Send the receipt by email or SMS link in mock mode
-8. Check receipt history and delivery status
-
-## Summary
-
-This MVP demonstrates the core backend architecture for an electronic fiscal receipt service. It supports receipt creation, PDF generation, QR code generation, receipt history, API-based integration, and mock delivery through email and SMS. The project is structured so that real tax API, SMTP, and SMS integrations can be connected in the next development stage.
+| Script | Purpose |
+|--------|---------|
+| `npm run dev` | Development server |
+| `npm run build` | Production build |
+| `npm run start` | Start production server |
+| `npm run lint` | ESLint check |
+| `npm run db:migrate` | Apply migrations (production) |
+| `npm run db:seed` | Seed demo data (mock mode only) |
+| `npm run db:setup` | migrate + seed |
+| `npm run test:src` | Run 31 SRC integration tests |

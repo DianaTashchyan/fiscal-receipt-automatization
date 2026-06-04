@@ -1,9 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
-import { configureDepartments } from "@/lib/src/client";
+import { nextSeq } from "@/lib/src/sequence";
+import { resolveAdminSrcClient } from "@/lib/src/resolve-client";
 import { SrcConfigError, SrcValidationError } from "@/lib/src/errors";
 import { validateDepartments } from "@/lib/src/validation";
+import { requireAuth } from "@/lib/utils/auth";
 
 export async function POST(req: NextRequest) {
+  try { await requireAuth(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();
@@ -38,8 +45,12 @@ export async function POST(req: NextRequest) {
     throw err;
   }
 
+  const restaurantId = typeof body.restaurantId === "string" ? body.restaurantId : null;
+
   try {
-    const result = await configureDepartments(crn as string, body.departments);
+    const seq = await nextSeq(crn as string);
+    const client = await resolveAdminSrcClient(restaurantId);
+    const result = await client.configureDepartments(crn as string, seq, body.departments);
     return NextResponse.json({ success: true, result });
   } catch (error) {
     if (error instanceof SrcConfigError) {

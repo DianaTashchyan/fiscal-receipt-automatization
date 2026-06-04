@@ -15,8 +15,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { peekSeq, setSeq } from "@/lib/src/sequence";
 import { isValidCrn } from "@/lib/src/validation";
+import { requireAdmin } from "@/lib/utils/auth";
 
 export async function GET(req: NextRequest) {
+  try { await requireAdmin(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const crn = req.nextUrl.searchParams.get("crn") ?? process.env.SRC_CRN;
 
   if (!crn || !isValidCrn(crn)) {
@@ -42,6 +48,11 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  try { await requireAdmin(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   let body: Record<string, unknown>;
   try {
     body = await req.json();

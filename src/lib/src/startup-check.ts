@@ -4,7 +4,14 @@
 // TAX_API_MODE=src_real. Fails fast with a clear error message
 // rather than discovering broken config on the first receipt attempt.
 //
-// Call validateSrcStartup() in instrumentation.ts (Next.js 13+).
+// Certificate notes:
+//   - If SRC_CERT_PATH is set, it is validated as the global fallback cert.
+//   - Restaurants may also have their own cert stored in DB
+//     (srcCertData / srcCertPath), which takes priority over the global cert.
+//   - If neither global env cert NOR a restaurant cert is configured, the
+//     first receipt for that restaurant will fail with a clear SrcConfigError.
+//
+// Call validateSrcStartup() in instrumentation.ts (Next.js 15+).
 // ============================================================
 
 import fs from "fs";
@@ -32,8 +39,9 @@ export function runSrcStartupChecks(): StartupCheckReport {
     ({ ok: true, check, detail });
   const fail = (check: string, detail: string): CheckResult =>
     ({ ok: false, check, detail });
+  const warn = (check: string, detail: string): CheckResult =>
+    ({ ok: true, check, detail: `[WARN] ${detail}` });
 
-  // In mock mode we only verify the mode is correctly set — no cert checks.
   if (mode !== "src_real") {
     checks.push(pass("mode", `Running in mock mode (TAX_API_MODE=${env.mode}). Real SRC calls are disabled.`));
     return { mode, allPassed: true, checks };
@@ -43,25 +51,32 @@ export function runSrcStartupChecks(): StartupCheckReport {
 
   checks.push(pass("mode", "TAX_API_MODE=src_real — real fiscalization is enabled"));
 
-  // TIN
+  // TIN (from env; individual restaurants may use their own tin field)
   if (!env.tin) {
-    checks.push(fail("SRC_TIN", "SRC_TIN is not set. Obtain your 8-digit TIN (ՀՎՀՀ) from the SRC cabinet."));
+    checks.push(warn(
+      "SRC_TIN",
+      "SRC_TIN is not set. Restaurants must have their own tin field configured. " +
+        "Set SRC_TIN as a global default or ensure each restaurant's tin column is populated."
+    ));
   } else if (!isValidTin(env.tin)) {
     checks.push(fail("SRC_TIN", `SRC_TIN="${env.tin}" is invalid — must be exactly 8 digits.`));
   } else {
-    checks.push(pass("SRC_TIN", `TIN: ${env.tin}`));
+    checks.push(pass("SRC_TIN", `Global TIN: ${env.tin}`));
   }
 
-  // CRN
+  // CRN (from env; individual restaurants may use their own crn field)
   if (!env.crn) {
-    checks.push(fail("SRC_CRN", "SRC_CRN is not set. Obtain the ECR registration number (ՀԴՄ) from the SRC cabinet."));
+    checks.push(warn(
+      "SRC_CRN",
+      "SRC_CRN is not set. Restaurants must have their own crn field configured."
+    ));
   } else if (!isValidCrn(env.crn)) {
     checks.push(fail("SRC_CRN", "SRC_CRN is blank or whitespace-only."));
   } else {
-    checks.push(pass("SRC_CRN", `CRN: ${env.crn}`));
+    checks.push(pass("SRC_CRN", `Global CRN: ${env.crn}`));
   }
 
-  // Certificate (PKCS#12)
+  // Global certificate (optional when restaurants have their own certs in DB)
   if (!env.certPath) {
     if (env.jksPath) {
       checks.push(fail(
@@ -70,10 +85,11 @@ export function runSrcStartupChecks(): StartupCheckReport {
         "Node cannot read .jks files. Convert with: ./scripts/convert-jks-to-p12.sh <TIN> <jksPass> <p12Pass>"
       ));
     } else {
-      checks.push(fail(
+      checks.push(warn(
         "SRC_CERT_PATH",
-        "SRC_CERT_PATH is not set. A PKCS#12 (.p12) certificate bundle is required for mTLS. " +
-        "Generate and convert with the scripts in ./scripts/."
+        "SRC_CERT_PATH is not set. No global fallback certificate configured. " +
+          "Each restaurant must have its own certificate uploaded via " +
+          "POST /api/restaurants/:id/src-config, otherwise real fiscalization will fail."
       ));
     }
   } else {
@@ -85,14 +101,14 @@ export function runSrcStartupChecks(): StartupCheckReport {
     if (!certReadable) {
       checks.push(fail("SRC_CERT_PATH", `Certificate file not found or unreadable at: ${env.certPath}`));
     } else {
-      checks.push(pass("SRC_CERT_PATH", `Certificate found at: ${env.certPath}`));
+      checks.push(pass("SRC_CERT_PATH", `Global certificate found at: ${env.certPath}`));
     }
   }
 
-  // Certificate password
-  if (!env.certPassword) {
-    checks.push(fail("SRC_CERT_PASSWORD", "SRC_CERT_PASSWORD is not set. Required to decrypt the PKCS#12 bundle."));
-  } else {
+  // Certificate password (required when certPath is set)
+  if (env.certPath && !env.certPassword) {
+    checks.push(fail("SRC_CERT_PASSWORD", "SRC_CERT_PASSWORD is not set. Required to decrypt the global PKCS#12 bundle."));
+  } else if (env.certPath && env.certPassword) {
     checks.push(pass("SRC_CERT_PASSWORD", "SRC_CERT_PASSWORD is set"));
   }
 
@@ -112,21 +128,13 @@ export function runSrcStartupChecks(): StartupCheckReport {
     checks.push(pass("SRC_CA_CERT_PATH", "Not set (optional — server certificate chain validation disabled)"));
   }
 
-  // Base URL
   checks.push(pass("SRC_BASE_URL", `Base URL: ${env.baseUrl}`));
-
-  // Language
   checks.push(pass("SRC_LANGUAGE", `Language: ${env.language}`));
 
   const allPassed = checks.every((c) => c.ok);
   return { mode, allPassed, checks };
 }
 
-/**
- * Throw if any startup check fails. Call this from instrumentation.ts.
- * In production, a failed check means the app cannot fiscalize and should
- * not silently start accepting orders.
- */
 export function validateSrcStartup(): void {
   const report = runSrcStartupChecks();
   if (!report.allPassed) {

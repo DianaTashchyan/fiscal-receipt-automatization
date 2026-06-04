@@ -6,6 +6,7 @@
 
 import { SrcValidationError } from "./errors";
 import {
+  DISCOUNT_TYPE,
   SrcDepartment,
   SrcPrintInput,
   SrcPrintItem,
@@ -168,15 +169,35 @@ export function validatePrintInput(input: SrcPrintInput): void {
 }
 
 /**
- * Compute the receipt total from a products payload and validate that the
- * paid amounts cover it (manual error 152 PAID_AMOUNT_LESS_THAN_TOTAL).
- * Returns the computed line total (sum of price*quantity less line discounts
- * is intentionally NOT applied here — SRC recomputes discounts server-side;
- * we only sanity-check the gross totals).
+ * Compute the net receipt total from a products payload, applying any
+ * line-item discounts exactly as SRC does (manual §10).
+ *
+ * Discount types:
+ *   TOTAL (4)    — fixed AMD off the line total:   price*qty − discount
+ *   PER_UNIT (2) — fixed AMD per unit:             price*qty − discount*qty
+ *   PERCENT (1)  — percentage off the line total:  price*qty * (1 − discount/100)
+ *
+ * Used by validatePaymentCoversTotal (error 152 PAID_AMOUNT_LESS_THAN_TOTAL).
  */
 export function computeItemsTotal(items: SrcPrintItem[]): number {
   return money(
-    items.reduce((sum, it) => sum + money(it.price) * quantity(it.quantity), 0)
+    items.reduce((sum, it) => {
+      const lineFull = money(it.price) * quantity(it.quantity);
+      let lineDiscount = 0;
+
+      if (it.discount !== undefined && it.discount > 0) {
+        const dt = it.discountType ?? DISCOUNT_TYPE.TOTAL;
+        if (dt === DISCOUNT_TYPE.TOTAL) {
+          lineDiscount = money(it.discount);
+        } else if (dt === DISCOUNT_TYPE.PER_UNIT) {
+          lineDiscount = money(it.discount * quantity(it.quantity));
+        } else if (dt === DISCOUNT_TYPE.PERCENT) {
+          lineDiscount = money(lineFull * it.discount / 100);
+        }
+      }
+
+      return sum + lineFull - lineDiscount;
+    }, 0)
   );
 }
 

@@ -2,15 +2,18 @@
 // src/lib/src/client.ts
 // Public entry point for the SRC integration.
 //
-// Picks the mock or real client based on env (TAX_API_MODE / SRC_MODE),
-// pulls the next persistent `seq` for seq-bearing methods, and exposes
-// thin typed wrappers used by the API routes and the fiscal service.
+// Two client factories:
+//   getSrcClient()                  — global env cert (admin/test routes)
+//   getRestaurantSrcClient(id, cfg) — per-restaurant cert (receipt flow)
 //
-// Architecture: Frontend -> Next API -> fiscal service -> THIS -> provider -> DB
-// No SRC logic lives in React components.
+// Mock mode always returns a single shared MockSrcClient regardless of
+// which factory is used. Real mode creates one RealSrcClient per restaurant
+// (keyed by restaurantId) with an https.Agent that reuses TCP connections.
+//
+// Architecture: Route → service → THIS → provider → DB
 // ============================================================
 
-import { getSrcMode } from "./config";
+import { getSrcMode, RealCertConfig } from "./config";
 import { MockSrcClient } from "./mock-client";
 import { RealSrcClient } from "./real-client";
 import { nextSeq } from "./sequence";
@@ -21,29 +24,62 @@ import {
   SrcReturnInput,
 } from "./types";
 
+// ---- Global env-cert singleton (used by admin/test routes) ----
+
 let cachedClient: ISrcClient | null = null;
 let cachedMode: string | null = null;
 
-/**
- * Resolve the active client. The real client is constructed lazily so mock
- * mode never touches certificates. Re-created if the mode env changes.
- */
 export function getSrcClient(): ISrcClient {
   const mode = getSrcMode();
   if (cachedClient && cachedMode === mode) return cachedClient;
-
   cachedClient = mode === "src_real" ? new RealSrcClient() : new MockSrcClient();
   cachedMode = mode;
   return cachedClient;
 }
 
-/** Test-only: clear the cached client (e.g. after changing env in a test). */
 export function _resetSrcClient(): void {
   cachedClient = null;
   cachedMode = null;
+  restaurantClientCache.clear();
 }
 
-// ---- Methods WITHOUT seq ----
+// ---- Per-restaurant client cache ----
+// Keyed by restaurant ID. Cache is invalidated when a restaurant's cert is
+// updated (call invalidateRestaurantSrcClient after storing the new cert).
+
+const restaurantClientCache = new Map<string, ISrcClient>();
+
+/**
+ * Return a client configured for a specific restaurant.
+ * In mock mode returns the shared mock instance (cert config is ignored).
+ * In real mode returns a cached RealSrcClient for this restaurant's cert.
+ */
+export function getRestaurantSrcClient(
+  restaurantId: string,
+  certConfig: RealCertConfig
+): ISrcClient {
+  if (getSrcMode() !== "src_real") {
+    if (!cachedClient) cachedClient = new MockSrcClient();
+    return cachedClient;
+  }
+
+  const cached = restaurantClientCache.get(restaurantId);
+  if (cached) return cached;
+
+  const client = new RealSrcClient(certConfig);
+  restaurantClientCache.set(restaurantId, client);
+  return client;
+}
+
+/**
+ * Remove a restaurant's cached client so the next call creates a fresh one
+ * with the updated cert. Call after storing a new cert via /api/restaurants/:id/src-config.
+ */
+export function invalidateRestaurantSrcClient(restaurantId: string): void {
+  restaurantClientCache.delete(restaurantId);
+}
+
+// ---- Methods WITHOUT seq (global env cert — for admin/test routes) ----
 
 export function checkConnection(crn: string) {
   return getSrcClient().checkConnection(crn);
@@ -61,7 +97,7 @@ export function getGoodList(params: {
   return getSrcClient().getGoodList(params);
 }
 
-// ---- Methods WITH seq (seq pulled from persistent store) ----
+// ---- Methods WITH seq (global env cert) ----
 
 export async function configureDepartments(
   crn: string,
@@ -71,9 +107,17 @@ export async function configureDepartments(
   return getSrcClient().configureDepartments(crn, seq, departments);
 }
 
-export async function printReceipt(input: SrcPrintInput) {
+/**
+ * Print a receipt.
+ * Pass `client` to use a per-restaurant cert (receipt fiscalization flow).
+ * Omit to use the global env cert (direct SRC admin routes).
+ */
+export async function printReceipt(
+  input: SrcPrintInput,
+  client?: ISrcClient
+) {
   const seq = await nextSeq(input.crn);
-  return getSrcClient().print(input, seq);
+  return (client ?? getSrcClient()).print(input, seq);
 }
 
 export async function printCopy(crn: string, receiptId: string | number) {

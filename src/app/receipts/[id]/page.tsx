@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import SendEmailButton from "./send-email-button";
 import SendSmsButton from "./send-sms-button";
 import { notFound } from "next/navigation";
@@ -57,11 +58,12 @@ export default async function ReceiptDetailsPage({
 
       <section style={card}>
         <h2>QR Code</h2>
-        <img
+        <Image
           src={qrImage}
           alt="Receipt QR Code"
           width={180}
           height={180}
+          unoptimized
         />
         <p style={{ marginTop: 12, fontSize: 13, color: "#555" }}>
           {qrText}

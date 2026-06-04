@@ -26,24 +26,26 @@ export default async function DashboardPage() {
           </p>
 
           <div style={actions}>
-            <Link href="/receipts/new" style={primaryButton}>
+            <Link href="/admin" style={primaryButton}>
+              Admin Dashboard
+            </Link>
+            <Link href="/receipts/new" style={secondaryButton}>
               + Create Receipt
             </Link>
-
-            <Link href="/receipts" style={secondaryButton}>
-              View Receipt History
+            <Link href="/docs" style={{ ...secondaryButton, background: "#4b5563" }}>
+              📖 SRC Guide
             </Link>
           </div>
         </div>
 
         <div style={infoBox}>
           <h3 style={{ marginTop: 0 }}>MVP Features</h3>
-          <p>✓ Receipt creation</p>
+          <p>✓ Receipt creation + SRC fiscalization</p>
           <p>✓ PDF generation with QR code</p>
-          <p>✓ Email delivery mock</p>
-          <p>✓ SMS link delivery mock</p>
-          <p>✓ API-ready architecture</p>
-          <p>✓ VCR / Tax API integration layer</p>
+          <p>✓ Email delivery (SMTP)</p>
+          <p>✓ SMS delivery (requires provider)</p>
+          <p>✓ API-key authenticated POS integration</p>
+          <p>✓ Per-restaurant mTLS certificate storage</p>
         </div>
       </section>
 

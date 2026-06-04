@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { checkConnection } from "@/lib/src/client";
+import { resolveAdminSrcClient } from "@/lib/src/resolve-client";
 import { SrcConfigError } from "@/lib/src/errors";
+import { requireAuth } from "@/lib/utils/auth";
 
 export async function POST(req: NextRequest) {
+  try { await requireAuth(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   let body: Record<string, unknown> = {};
   try {
     body = await req.json();
@@ -16,8 +22,11 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const restaurantId = typeof body.restaurantId === "string" ? body.restaurantId : null;
+
   try {
-    const result = await checkConnection(crn as string);
+    const client = await resolveAdminSrcClient(restaurantId);
+    const result = await client.checkConnection(crn);
     return NextResponse.json({ success: true, result });
   } catch (error) {
     if (error instanceof SrcConfigError) {

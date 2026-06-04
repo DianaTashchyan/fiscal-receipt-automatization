@@ -5,23 +5,59 @@
 // ============================================================
 
 import { money, quantity } from "./validation";
-import { MODE, PrintMode, SrcPrintInput, SrcPrintItem, SrcPrintResult } from "./types";
+import {
+  DISCOUNT_TYPE,
+  MODE,
+  PrintMode,
+  SrcPrintInput,
+  SrcPrintItem,
+  SrcPrintResult,
+} from "./types";
+import { SrcValidationError } from "./errors";
 
 export type LocalSaleItem = {
   name: string;
   goodCode: string;
   adgCode: string;
   unit: string;
-  departmentTaxId: string; // dep number, stored as string locally
+  departmentTaxId: string;
   quantity: number | string;
   unitPrice: number | string;
+  /** Total AMD discount for this line (e.g. 500 = 500 AMD off the line total). */
+  discountAmount?: number | string;
+  /**
+   * SRC discount type for this line.
+   * 1 = PERCENT, 2 = PER_UNIT dram, 4 = TOTAL dram (default).
+   * Only relevant when discountAmount > 0.
+   */
+  discountType?: number;
 };
 
 export type LocalSaleInput = {
   crn: string;
   cashierId: number | string;
   paymentMethod?: "CASH" | "CARD" | "MIXED" | "ONLINE";
+  /**
+   * The DB-stored total including tip. Used only for storage; NOT sent to SRC.
+   * Use srcPaymentAmount for the SRC payment fields.
+   */
   totalAmount: number | string;
+  /**
+   * The amount to send SRC as the payment (cardAmount + cashAmount combined).
+   * Must exclude tips — SRC computes items total independently and flags
+   * any payment that doesn't match. Equals billAmount (pre-tip).
+   * Defaults to totalAmount if omitted (backward compat for tip-free receipts).
+   */
+  srcPaymentAmount?: number | string;
+  /**
+   * MIXED payments: explicit cash portion. Required when paymentMethod=MIXED.
+   * cashAmount + cardAmount must equal srcPaymentAmount.
+   */
+  explicitCashAmount?: number | string;
+  /**
+   * MIXED payments: explicit card portion. Required when paymentMethod=MIXED.
+   */
+  explicitCardAmount?: number | string;
   partnerTin?: string | null;
   prePaymentAmount?: number | string;
   partialAmount?: number | string;
@@ -29,17 +65,52 @@ export type LocalSaleInput = {
   items: LocalSaleItem[];
 };
 
-/** Split the total into card/cash buckets based on payment method. */
+/**
+ * Split the payment into SRC cashAmount and cardAmount.
+ *
+ * Rules:
+ *   CASH           → cashAmount = srcPaymentAmount, cardAmount = 0
+ *   CARD / ONLINE  → cardAmount = srcPaymentAmount, cashAmount = 0
+ *   MIXED          → requires explicitCashAmount + explicitCardAmount
+ *                    (their sum must equal srcPaymentAmount ± 0.01)
+ */
 function splitPayment(input: LocalSaleInput): {
   cardAmount: number;
   cashAmount: number;
 } {
-  const total = money(input.totalAmount);
+  const payAmt = money(input.srcPaymentAmount ?? input.totalAmount);
+
   if (input.paymentMethod === "CASH") {
-    return { cardAmount: 0, cashAmount: total };
+    return { cardAmount: 0, cashAmount: payAmt };
   }
-  // CARD / MIXED / ONLINE -> treat as non-cash by default for the MVP.
-  return { cardAmount: total, cashAmount: 0 };
+  if (input.paymentMethod === "CARD" || input.paymentMethod === "ONLINE") {
+    return { cardAmount: payAmt, cashAmount: 0 };
+  }
+  if (input.paymentMethod === "MIXED") {
+    if (
+      input.explicitCashAmount === undefined ||
+      input.explicitCardAmount === undefined
+    ) {
+      throw new SrcValidationError(
+        "paymentMethod MIXED requires explicit cashAmount and cardAmount. " +
+          "Both must be provided and must sum to billAmount.",
+        "cashAmount"
+      );
+    }
+    const cash = money(input.explicitCashAmount);
+    const card = money(input.explicitCardAmount);
+    const sum = money(cash + card);
+    if (Math.abs(sum - payAmt) > 0.01) {
+      throw new SrcValidationError(
+        `MIXED cashAmount (${cash}) + cardAmount (${card}) = ${sum} ` +
+          `but billAmount is ${payAmt}. They must match.`,
+        "cashAmount"
+      );
+    }
+    return { cashAmount: cash, cardAmount: card };
+  }
+  // Unknown paymentMethod — treat as card
+  return { cardAmount: payAmt, cashAmount: 0 };
 }
 
 export function mapToSrcPrintInput(input: LocalSaleInput): SrcPrintInput {
@@ -62,15 +133,25 @@ export function mapToSrcPrintInput(input: LocalSaleInput): SrcPrintInput {
     return base;
   }
 
-  const items: SrcPrintItem[] = input.items.map((it) => ({
-    adgCode: it.adgCode,
-    dep: Number(it.departmentTaxId),
-    goodCode: it.goodCode.slice(0, 50),
-    goodName: it.name.slice(0, 50),
-    quantity: quantity(it.quantity),
-    unit: it.unit.slice(0, 50),
-    price: money(it.unitPrice),
-  }));
+  const items: SrcPrintItem[] = input.items.map((it) => {
+    const item: SrcPrintItem = {
+      adgCode: it.adgCode,
+      dep: Number(it.departmentTaxId),
+      goodCode: it.goodCode.slice(0, 50),
+      goodName: it.name.slice(0, 50),
+      quantity: quantity(it.quantity),
+      unit: it.unit.slice(0, 50),
+      price: money(it.unitPrice),
+    };
+
+    const discAmt = it.discountAmount !== undefined ? Number(it.discountAmount) : 0;
+    if (discAmt > 0) {
+      item.discount = money(discAmt);
+      item.discountType = it.discountType ?? DISCOUNT_TYPE.TOTAL;
+    }
+
+    return item;
+  });
 
   return { ...base, items };
 }

@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+function makeOrderId() {
+  return `ORDER-${Date.now()}`;
+}
+
 type Product = {
   id: string;
   externalProductId: string | null;
@@ -29,7 +33,7 @@ export default function ReceiptCreateForm({ restaurants }: Props) {
   const router = useRouter();
 
   const [restaurantId, setRestaurantId] = useState(restaurants[0]?.id ?? "");
-  const [externalOrderId, setExternalOrderId] = useState(`ORDER-${Date.now()}`);
+  const [externalOrderId, setExternalOrderId] = useState(makeOrderId);
   const [paymentMethod, setPaymentMethod] = useState("CARD");
   const [deliveryMethod, setDeliveryMethod] = useState("NONE");
   const [customerEmail, setCustomerEmail] = useState("");
