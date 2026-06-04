@@ -276,23 +276,61 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     }
     setLoading(true);
     setResult(null);
+    setDeptAutoConfigStatus(null);
     const r = await callApi("/api/src/check-connection", "POST", {
       crn: restaurant.crn, restaurantId: restaurant.id,
     });
+    setLoading(false);
     if (r.ok && (r.data.result as Record<string, unknown>)?.code === 0) {
       setResult({ ok: true, message: "Connection successful — SRC is reachable and certificate accepted." });
       await advanceStep(6);
+      // Auto-configure department in background if not already done
+      if (restaurant.departments.length === 0) {
+        setDeptAutoConfigStatus("loading");
+        const dbR = await callApi(`/api/restaurants/${restaurant.id}/departments`, "POST", {
+          name: "Main", taxDepartmentId: "1", taxRegime: Number(deptRegime), isDefault: true,
+        });
+        if (!dbR.ok) {
+          setDeptAutoConfigStatus("failed");
+          setDeptAutoConfigError((dbR.data.error as string) ?? "Failed to save department.");
+          return;
+        }
+        const srcR = await callApi("/api/src/configure-departments", "POST", {
+          crn: restaurant.crn, restaurantId: restaurant.id,
+          departments: [{ dep: 1, taxRegime: Number(deptRegime) }],
+        });
+        if (srcR.ok) {
+          setRestaurant((prev) => ({
+            ...prev,
+            departments: [...prev.departments, {
+              id: (dbR.data as { id: string }).id ?? "",
+              name: "Main", taxDepartmentId: "1", taxRegime: deptRegime,
+            }],
+          }));
+          setDeptAutoConfigStatus("ok");
+          await advanceStep(7);
+        } else {
+          setDeptAutoConfigStatus("failed");
+          setDeptAutoConfigError(`SRC sync failed: ${(srcR.data.error as string) ?? "unknown error"}`);
+        }
+      } else {
+        setDeptAutoConfigStatus("ok");
+      }
     } else {
       const msg = (r.data.error as string) ?? ((r.data.result as Record<string, unknown>)?.message as string) ?? "Connection failed";
       setResult({ ok: false, message: msg });
     }
-    setLoading(false);
   }
 
   // ---- Step 7: Configure departments ----
   // dept number is always 1 (standard ECR single department); name is always "Main".
   // Only the tax regime varies by business type — that is the sole user choice.
   const [deptRegime, setDeptRegime] = useState("1");
+  // Auto-config status set during step 6 test connection
+  const [deptAutoConfigStatus, setDeptAutoConfigStatus] = useState<null | "loading" | "ok" | "failed">(
+    initial.departments.length > 0 ? "ok" : null
+  );
+  const [deptAutoConfigError, setDeptAutoConfigError] = useState("");
 
   async function doConfigureDepts() {
     setLoading(true);
@@ -878,11 +916,11 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
           </div>
         )}
 
-        {/* ---- Step 6: Test Connection ---- */}
+        {/* ---- Step 6: Test Connection (+ auto-configure department) ---- */}
         {step === 6 && (
           <div>
             <p className="text-sm text-gray-600 mb-4">
-              Test the mutual TLS connection to SRC. This verifies that the certificate is accepted and your server&apos;s IP is registered.
+              Test the mutual TLS connection to SRC. If the connection succeeds, the system will automatically configure department dep 1 in the background — you will not need to do this manually.
             </p>
             {!restaurant.crn && (
               <div className="mb-3 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
@@ -895,36 +933,9 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                 <strong>CRN:</strong> {restaurant.crn}
               </div>
             )}
-            <ResultBanner result={result} />
-            <div className="flex gap-2">
-              <button onClick={() => goTo(5)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={doTestConnection} loading={loading} label="Test SRC connection" />
-            </div>
-            {result?.ok && (
-              <button onClick={() => goTo(7)} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Connection OK → Configure departments (step 7)
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* ---- Step 7: Configure Departments ---- */}
-        {step === 7 && (
-          <div>
-            <p className="text-sm text-gray-600 mb-3">
-              The system will register one department (dep 1, &ldquo;Main&rdquo;) with SRC automatically.
-              Select your tax regime — this is the only business-specific setting required.
-            </p>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 mb-3">
-              Department number and name are fixed (dep 1 / &ldquo;Main&rdquo;) — the SRC ECR manual uses a single department for standard setups. Only the tax regime reflects your business type.
-            </div>
-            {restaurant.departments.length > 0 && (
-              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ Already configured: dep 1, regime {restaurant.departments[0]?.taxRegime}
-              </div>
-            )}
             <label className="flex flex-col gap-1 mb-4 max-w-xs">
               <span className="text-sm font-medium text-gray-700">Your tax regime</span>
+              <span className="text-xs text-gray-400">Required to auto-configure department after connection test.</span>
               <select value={deptRegime} onChange={(e) => setDeptRegime(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
                 <option value="1">1 — VAT (ԱԱՀ) — most businesses</option>
@@ -934,18 +945,70 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               </select>
             </label>
             <ResultBanner result={result} />
+            {deptAutoConfigStatus === "loading" && (
+              <div className="mb-3 px-3 py-2 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700 animate-pulse">
+                Configuring department automatically…
+              </div>
+            )}
+            {deptAutoConfigStatus === "ok" && (
+              <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+                ✓ Department (dep 1 — Main — regime {deptRegime}) configured automatically.
+              </div>
+            )}
+            {deptAutoConfigStatus === "failed" && (
+              <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                Connection succeeded but department auto-config failed: {deptAutoConfigError}. Retry in step 7.
+              </div>
+            )}
             <div className="flex gap-2">
-              <button onClick={() => goTo(6)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={doConfigureDepts} loading={loading} label="Configure department automatically" />
-              {restaurant.departments.length > 0 && (
-                <button onClick={() => goTo(8)} className="px-4 py-2 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
-                  Skip (already done) →
-                </button>
-              )}
+              <button onClick={() => goTo(5)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
+              <StepButton onClick={doTestConnection} loading={loading} label="Test SRC connection" />
             </div>
-            {result?.ok && (
+            {(result?.ok || restaurant.onboardingStep >= 6) && (
+              <button onClick={() => goTo(7)} className="mt-3 text-sm text-blue-600 hover:underline block">
+                Continue → Step 7
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* ---- Step 7: Department status (auto-configured in step 6) ---- */}
+        {step === 7 && (
+          <div>
+            <p className="text-sm text-gray-600 mb-3">
+              Department configuration is handled automatically when you test the SRC connection in step 6.
+              Department number and name are fixed (dep 1 / &ldquo;Main&rdquo;) — only the tax regime reflects your business type.
+            </p>
+            {restaurant.departments.length > 0 ? (
+              <div className="mb-4 px-3 py-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-700">
+                ✓ Department auto-configured: dep 1 — Main — regime {restaurant.departments[0]?.taxRegime}
+                <span className="block text-xs text-green-600 mt-1">No manual input was required — the system handled this automatically.</span>
+              </div>
+            ) : (
+              <div>
+                <div className="mb-3 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+                  Department not yet configured. This usually happens automatically in step 6. If it failed, select your tax regime and retry here.
+                </div>
+                <label className="flex flex-col gap-1 mb-4 max-w-xs">
+                  <span className="text-sm font-medium text-gray-700">Your tax regime</span>
+                  <select value={deptRegime} onChange={(e) => setDeptRegime(e.target.value)}
+                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="1">1 — VAT (ԱԱՀ) — most businesses</option>
+                    <option value="2">2 — VAT-exempt</option>
+                    <option value="3">3 — Turnover tax</option>
+                    <option value="7">7 — Micro enterprise</option>
+                  </select>
+                </label>
+                <ResultBanner result={result} />
+                <div className="flex gap-2">
+                  <button onClick={() => goTo(6)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back to step 6</button>
+                  <StepButton onClick={doConfigureDepts} loading={loading} label="Configure department" />
+                </div>
+              </div>
+            )}
+            {(restaurant.departments.length > 0 || result?.ok) && (
               <button onClick={() => goTo(8)} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Department configured → Activate ECR (step 8)
+                Department ready → Activate ECR (step 8)
               </button>
             )}
           </div>

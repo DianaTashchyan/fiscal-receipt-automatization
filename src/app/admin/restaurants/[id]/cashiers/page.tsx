@@ -15,7 +15,7 @@ export default function CashiersPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
-  const [form, setForm] = useState({ name: "", taxCashierId: "", pinCode: "1234", isDefault: false });
+  const [form, setForm] = useState({ taxCashierId: "", isDefault: false });
 
   function load() {
     fetch(`/api/restaurants/${id}/cashiers`, { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -31,10 +31,15 @@ export default function CashiersPage() {
     const res = await fetch(`/api/restaurants/${id}/cashiers`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify(form),
+      body: JSON.stringify({
+        name: "Main Cashier",
+        taxCashierId: form.taxCashierId,
+        pinCode: String(Math.floor(1000 + Math.random() * 9000)),
+        isDefault: form.isDefault,
+      }),
     });
     const data = await res.json();
-    if (res.ok) { setSuccess(`Cashier "${data.name}" added.`); setForm({ name: "", taxCashierId: "", pinCode: "1234", isDefault: false }); await load(); }
+    if (res.ok) { setSuccess(`Cashier added (Tax ID: ${data.taxCashierId}).`); setForm({ taxCashierId: "", isDefault: false }); await load(); }
     else setError(data.error ?? "Failed");
     setSaving(false);
   }
@@ -61,27 +66,20 @@ export default function CashiersPage() {
 
       <form onSubmit={handleAdd} className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3">
         <h2 className="font-semibold text-gray-900">Add cashier</h2>
+        <p className="text-xs text-gray-500">
+          Name (&ldquo;Main Cashier&rdquo;) and PIN are set automatically. Only the Tax Cashier ID is required — find it in your SRC cabinet (ECR page → Cashiers section).
+        </p>
         {error && <p className="text-sm text-red-600">{error}</p>}
         {success && <p className="text-sm text-green-600">{success}</p>}
-        <div className="grid grid-cols-2 gap-3">
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-gray-600">Name</span>
-            <input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required placeholder="Main Cashier"
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-gray-600">Tax Cashier ID (from SRC)</span>
-            <input value={form.taxCashierId} onChange={(e) => setForm((p) => ({ ...p, taxCashierId: e.target.value }))} required placeholder="3"
+        <div className="flex gap-3 items-end">
+          <label className="flex flex-col gap-1 flex-1 max-w-xs">
+            <span className="text-xs font-medium text-gray-600">Tax Cashier ID (from SRC cabinet)</span>
+            <input value={form.taxCashierId} onChange={(e) => setForm((p) => ({ ...p, taxCashierId: e.target.value }))} required placeholder="e.g. 1"
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
           </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-gray-600">PIN code</span>
-            <input value={form.pinCode} onChange={(e) => setForm((p) => ({ ...p, pinCode: e.target.value }))} required placeholder="1234" minLength={4}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-          </label>
-          <label className="flex items-center gap-2 pt-5">
+          <label className="flex items-center gap-2 pb-2">
             <input type="checkbox" checked={form.isDefault} onChange={(e) => setForm((p) => ({ ...p, isDefault: e.target.checked }))} />
-            <span className="text-sm text-gray-700">Set as default</span>
+            <span className="text-sm text-gray-700">Default</span>
           </label>
         </div>
         <button type="submit" disabled={saving}

@@ -17,7 +17,7 @@ export default function DepartmentsPage() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [syncMsg, setSyncMsg] = useState("");
-  const [form, setForm] = useState({ name: "Main", taxDepartmentId: "1", taxRegime: "1", isDefault: true });
+  const [form, setForm] = useState({ taxRegime: "1", isDefault: true });
 
   function load() {
     fetch(`/api/restaurants/${id}/departments`, { headers: { Authorization: `Bearer ${getToken()}` } })
@@ -33,7 +33,7 @@ export default function DepartmentsPage() {
     const res = await fetch(`/api/restaurants/${id}/departments`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${getToken()}` },
-      body: JSON.stringify({ ...form, taxRegime: Number(form.taxRegime) }),
+      body: JSON.stringify({ name: "Main", taxDepartmentId: "1", taxRegime: Number(form.taxRegime), isDefault: form.isDefault }),
     });
     const data = await res.json();
     if (res.ok) { setSuccess(`Department "${data.name}" saved to DB.`); await load(); }
@@ -89,19 +89,10 @@ export default function DepartmentsPage() {
 
       <form onSubmit={handleAdd} className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3">
         <h2 className="font-semibold text-gray-900">Add department</h2>
+        <p className="text-xs text-gray-500">Department name (Main) and number (dep 1) are fixed. Select your tax regime.</p>
         {error && <p className="text-sm text-red-600">{error}</p>}
         {success && <p className="text-sm text-green-600">{success}</p>}
-        <div className="grid grid-cols-3 gap-3">
-          <label className="flex flex-col gap-1 col-span-3">
-            <span className="text-xs font-medium text-gray-600">Department name</span>
-            <input value={form.name} onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))} required
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-          </label>
-          <label className="flex flex-col gap-1">
-            <span className="text-xs font-medium text-gray-600">Dept number</span>
-            <input value={form.taxDepartmentId} onChange={(e) => setForm((p) => ({ ...p, taxDepartmentId: e.target.value }))} required
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-          </label>
+        <div className="flex gap-3 items-end">
           <label className="flex flex-col gap-1">
             <span className="text-xs font-medium text-gray-600">Tax regime</span>
             <select value={form.taxRegime} onChange={(e) => setForm((p) => ({ ...p, taxRegime: e.target.value }))}
@@ -109,7 +100,7 @@ export default function DepartmentsPage() {
               {Object.entries(REGIMES).map(([v, l]) => <option key={v} value={v}>{v} — {l}</option>)}
             </select>
           </label>
-          <label className="flex items-center gap-2 pt-4">
+          <label className="flex items-center gap-2 pb-2">
             <input type="checkbox" checked={form.isDefault} onChange={(e) => setForm((p) => ({ ...p, isDefault: e.target.checked }))} />
             <span className="text-sm text-gray-700">Default</span>
           </label>
