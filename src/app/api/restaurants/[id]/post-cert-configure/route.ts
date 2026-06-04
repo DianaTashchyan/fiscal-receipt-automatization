@@ -8,11 +8,14 @@
 //      The SRC manual does not document which cert field carries the CRN — this is best-effort.
 //   2. In mock mode: auto-assigns CRN if not found anywhere.
 //   3. In real mode: returns a clear error if CRN cannot be determined automatically.
-//   4. Creates a default department (dep 1 / Main / VAT) if the restaurant has none.
-//   5. Creates a default cashier (taxCashierId=1 / Default Cashier / random PIN) if none exist.
+//   4. Uses the existing department (taxRegime as stored). If none exists, sets departmentError —
+//      the admin must configure it via the Departments page with the correct regime.
+//   5. Uses the existing cashier (taxCashierId as stored). If none exists, sets cashierError —
+//      the admin must add it via the Cashiers page with the SRC-assigned ID.
 //   6. Calls checkConnection to verify mTLS.
 //   7. Calls activate to move ECR to active state.
-//   8. Advances srcOnboardingStep.
+//   8. Calls configureDepartments with the stored taxRegime (not hardcoded).
+//   9. Advances srcOnboardingStep only for steps that actually succeeded.
 //
 // Why CRN cannot always be auto-fetched:
 //   The SRC VCR API (taxservice.am/taxsystem-rs-vcr) has no getCRN or getDeviceInfo endpoint.
@@ -20,10 +23,11 @@
 //   approval process (paper/web form), not through the VCR web service.
 //   Some SRC CA implementations embed the CRN in the signed certificate — we try that here.
 //
-// Why cashier ID cannot be fetched:
+// Why cashier ID cannot be auto-determined:
 //   The SRC VCR API has no getCashierList or getCashierInfo endpoint.
 //   The print method accepts cashierId as input; SRC does not expose a read API for it.
-//   We default to ID=1 which SRC assigns to the first registered cashier after u6 approval.
+//   SRC assigns IDs sequentially but the starting value varies — hardcoding "1" is incorrect.
+//   The admin must obtain the correct ID from SRC cabinet and set it via the Cashiers page.
 
 import { NextRequest, NextResponse } from "next/server";
 import forge from "node-forge";
