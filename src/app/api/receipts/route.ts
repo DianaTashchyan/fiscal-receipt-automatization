@@ -4,6 +4,7 @@ import prisma from "@/lib/prisma/client";
 import { PaymentMethod, DeliveryMethod, ReceiptStatus } from "@prisma/client";
 import { registerSaleInTaxApi } from "@/lib/services/tax-api.service";
 import { money } from "@/lib/src/validation";
+import { requireAuth } from "@/lib/utils/auth";
 
 const PAGE_SIZE = 50;
 
@@ -12,6 +13,11 @@ function hashApiKey(rawKey: string): string {
 }
 
 export async function GET(req: NextRequest) {
+  try { await requireAuth(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(req.url);
   const page = Math.max(1, parseInt(searchParams.get("page") ?? "1", 10));
   const skip = (page - 1) * PAGE_SIZE;

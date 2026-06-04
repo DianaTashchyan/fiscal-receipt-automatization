@@ -3,8 +3,14 @@ import prisma from "@/lib/prisma/client";
 import { PaymentMethod, DeliveryMethod, ReceiptStatus } from "@prisma/client";
 import { registerSaleInTaxApi } from "@/lib/services/tax-api.service";
 import { money } from "@/lib/src/validation";
+import { requireAuth } from "@/lib/utils/auth";
 
 export async function POST(req: NextRequest) {
+  try { await requireAuth(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   try {
     const body = await req.json();
 

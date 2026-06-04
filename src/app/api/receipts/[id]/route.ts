@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
+import { requireAuth } from "@/lib/utils/auth";
 
 type RouteParams = {
   params: Promise<{
@@ -7,7 +8,12 @@ type RouteParams = {
   }>;
 };
 
-export async function GET(_req: NextRequest, context: RouteParams) {
+export async function GET(req: NextRequest, context: RouteParams) {
+  try { await requireAuth(req); } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const { id } = await context.params;
 
   const receipt = await prisma.receipt.findUnique({
