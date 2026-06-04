@@ -252,13 +252,12 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (!certFile) { setCertError("Select the signed .crt file from SRC."); return; }
     if (certFile.size > 1_048_576) { setCertError("File must be smaller than 1 MB."); return; }
     if (!certFile.name.match(/\.crt$/i)) { setCertError("File must be a .crt certificate."); return; }
-    if (!certPassword.trim()) { setCertError("Choose a password for the .p12 bundle."); return; }
 
     setLoading(true);
     setResult(null);
     const buf = await certFile.arrayBuffer();
     const crtBase64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    const r = await callApi(`/api/restaurants/${restaurant.id}/upload-crt`, "POST", { crtBase64, p12Password: certPassword });
+    const r = await callApi(`/api/restaurants/${restaurant.id}/upload-crt`, "POST", { crtBase64 });
     if (r.ok) {
       setRestaurant((prev) => ({ ...prev, hasCert: true }));
       setResult({ ok: true, message: "Signed .crt converted to .p12 server-side and stored securely." });
@@ -810,20 +809,13 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
             {certMode === "crt" && (
               <div className="flex flex-col gap-3 mb-4">
                 <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
-                  The server will combine the signed .crt from SRC with the private key generated in step 2 to create a .p12 internally. The private key never leaves the server.
+                  The server will combine the signed .crt from SRC with the private key generated in step 2 to create a .p12 internally. The private key never leaves the server. No password is required — the server generates one automatically.
                 </div>
                 <label className="flex flex-col gap-1">
                   <span className="text-sm font-medium text-gray-700">Signed .crt from SRC</span>
                   <input type="file" accept=".crt"
                     onChange={(e) => { setCertFile(e.target.files?.[0] ?? null); setCertError(""); }}
                     className="text-sm border border-gray-300 rounded-lg px-3 py-2" />
-                </label>
-                <label className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-gray-700">New .p12 bundle password</span>
-                  <input type="password" value={certPassword}
-                    onChange={(e) => { setCertPassword(e.target.value); setCertError(""); }}
-                    placeholder="Choose a strong password for the new .p12"
-                    className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
                 </label>
               </div>
             )}

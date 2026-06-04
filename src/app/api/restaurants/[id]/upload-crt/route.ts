@@ -2,13 +2,14 @@
 // Accepts a signed .crt (base64) from SRC, combines it server-side with the
 // encrypted private key stored from the CSR generation step, converts to PKCS#12,
 // and stores the resulting .p12 — all without ever exposing the private key to
-// the browser.
+// the browser. The .p12 bundle password is generated server-side; the caller
+// does not need to supply or store it.
 //
-// Body: { crtBase64: string, p12Password: string }
-// The p12Password is chosen by the user and used to protect the .p12 bundle.
+// Body: { crtBase64: string }
 
 import https from "https";
 import forge from "node-forge";
+import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
 import { requireRestaurantAccess } from "@/lib/utils/auth";
@@ -38,18 +39,15 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    const body = await req.json() as { crtBase64?: string; p12Password?: string };
-    const { crtBase64, p12Password } = body;
+    const body = await req.json() as { crtBase64?: string };
+    const { crtBase64 } = body;
 
     if (!crtBase64 || typeof crtBase64 !== "string") {
       return NextResponse.json({ error: "crtBase64 is required" }, { status: 400 });
     }
-    if (!p12Password || typeof p12Password !== "string" || p12Password.trim() === "") {
-      return NextResponse.json(
-        { error: "p12Password is required — choose a strong password to protect the .p12 bundle" },
-        { status: 400 }
-      );
-    }
+
+    // Generate a secure random password server-side; caller never needs to know it.
+    const p12Password = randomBytes(32).toString("hex");
 
     // Decode the .crt
     let crtPem: string;
