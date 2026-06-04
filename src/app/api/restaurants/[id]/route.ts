@@ -89,8 +89,20 @@ export async function DELETE(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
     }
 
-    // Cascade deletes (apiKeys, cashiers, departments, products, receipts, events)
-    // are handled by Prisma onDelete: Cascade defined in the schema.
+    // Receipt→Restaurant lacks onDelete:Cascade in the schema, so delete receipts
+    // (and their cascade children: ReceiptItem, ReceiptEvent) before the restaurant.
+    // All other relations (apiKeys, cashiers, departments, products) have onDelete:Cascade.
+    const receipts = await prisma.receipt.findMany({
+      where: { restaurantId: id },
+      select: { id: true },
+    });
+    if (receipts.length > 0) {
+      const receiptIds = receipts.map((r) => r.id);
+      await prisma.receiptEvent.deleteMany({ where: { receiptId: { in: receiptIds } } });
+      await prisma.receiptItem.deleteMany({ where: { receiptId: { in: receiptIds } } });
+      await prisma.receipt.deleteMany({ where: { restaurantId: id } });
+    }
+
     await prisma.restaurant.delete({ where: { id } });
 
     return NextResponse.json({ success: true, deleted: { id, name: restaurant.name } });
