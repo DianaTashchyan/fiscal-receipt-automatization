@@ -290,16 +290,15 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   // ---- Step 7: Configure departments ----
-  const [deptName, setDeptName] = useState("Main");
-  const [deptTaxId, setDeptTaxId] = useState("1");
+  // dept number is always 1 (standard ECR single department); name is always "Main".
+  // Only the tax regime varies by business type — that is the sole user choice.
   const [deptRegime, setDeptRegime] = useState("1");
 
   async function doConfigureDepts() {
-    if (!deptTaxId) { setResult({ ok: false, message: "Department number is required." }); return; }
     setLoading(true);
     setResult(null);
     const dbR = await callApi(`/api/restaurants/${restaurant.id}/departments`, "POST", {
-      name: deptName, taxDepartmentId: deptTaxId, taxRegime: Number(deptRegime), isDefault: true,
+      name: "Main", taxDepartmentId: "1", taxRegime: Number(deptRegime), isDefault: true,
     });
     if (!dbR.ok) {
       setResult({ ok: false, message: (dbR.data.error as string) ?? "Failed to save department." });
@@ -308,17 +307,17 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     }
     const srcR = await callApi("/api/src/configure-departments", "POST", {
       crn: restaurant.crn, restaurantId: restaurant.id,
-      departments: [{ dep: Number(deptTaxId), taxRegime: Number(deptRegime) }],
+      departments: [{ dep: 1, taxRegime: Number(deptRegime) }],
     });
     if (srcR.ok) {
       setRestaurant((prev) => ({
         ...prev,
         departments: [...prev.departments, {
           id: (dbR.data as { id: string }).id ?? "",
-          name: deptName, taxDepartmentId: deptTaxId, taxRegime: deptRegime,
+          name: "Main", taxDepartmentId: "1", taxRegime: deptRegime,
         }],
       }));
-      setResult({ ok: true, message: `Department "${deptName}" saved and synced to SRC.` });
+      setResult({ ok: true, message: "Department (dep 1) configured and synced to SRC." });
       await advanceStep(7);
     } else {
       setResult({ ok: false, message: `Saved to DB but SRC sync failed: ${(srcR.data.error as string) ?? "unknown error"}` });
@@ -342,23 +341,25 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   // ---- Step 9: Add cashier ----
-  const [cashierName, setCashierName] = useState("");
+  // Name ("Main Cashier") and PIN (random) are local/internal fields — only taxCashierId
+  // comes from SRC (u6 cabinet → Cashiers section) and cannot be auto-fetched.
   const [cashierTaxId, setCashierTaxId] = useState("");
-  const [cashierPin, setCashierPin] = useState("1234");
 
   async function doAddCashier() {
-    if (!cashierName || !cashierTaxId) {
-      setResult({ ok: false, message: "Name and Tax Cashier ID are required." });
+    if (!cashierTaxId.trim()) {
+      setResult({ ok: false, message: "Tax Cashier ID is required — find it in the SRC cabinet (u6 → Cashiers)." });
       return;
     }
     setLoading(true);
     setResult(null);
+    // PIN is a local access code only — auto-generate a random 4-digit value.
+    const autoPin = String(Math.floor(1000 + Math.random() * 9000));
     const r = await callApi(`/api/restaurants/${restaurant.id}/cashiers`, "POST", {
-      name: cashierName, taxCashierId: cashierTaxId, pinCode: cashierPin, isDefault: true,
+      name: "Main Cashier", taxCashierId: cashierTaxId.trim(), pinCode: autoPin, isDefault: true,
     });
     if (r.ok) {
-      setRestaurant((prev) => ({ ...prev, cashiers: [...prev.cashiers, { id: (r.data as {id:string}).id, name: cashierName, taxCashierId: cashierTaxId, isDefault: true }] }));
-      setResult({ ok: true, message: `Cashier "${cashierName}" added.` });
+      setRestaurant((prev) => ({ ...prev, cashiers: [...prev.cashiers, { id: (r.data as {id:string}).id, name: "Main Cashier", taxCashierId: cashierTaxId.trim(), isDefault: true }] }));
+      setResult({ ok: true, message: `Cashier added (Tax ID: ${cashierTaxId.trim()}).` });
       await advanceStep(9);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to add cashier." });
@@ -367,11 +368,50 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   // ---- Step 10: Add product ----
+  // Good codes are required by SRC manual for every SrcPrintItem (goodCode + adgCode).
+  // getGoodList returns goodCode; adgCode is derived as the first 4 chars (HS prefix).
   const [prodName, setProdName] = useState("");
   const [prodGoodCode, setProdGoodCode] = useState("");
   const [prodAdgCode, setProdAdgCode] = useState("");
   const [prodUnit, setProdUnit] = useState("piece");
   const [prodPrice, setProdPrice] = useState("");
+
+  type GoodItem = { goodName: string; goodCode: string; price: number };
+  const [goodList, setGoodList] = useState<GoodItem[]>([]);
+  const [goodListLoading, setGoodListLoading] = useState(false);
+  const [goodListError, setGoodListError] = useState("");
+
+  async function doFetchGoodList() {
+    setGoodListLoading(true);
+    setGoodListError("");
+    const r = await callApi("/api/src/get-good-list", "POST", {
+      crn: restaurant.crn,
+      tin: restaurant.tin,
+      taxRegime: Number(restaurant.departments[0]?.taxRegime ?? 1),
+      restaurantId: restaurant.id,
+    });
+    setGoodListLoading(false);
+    if (r.ok) {
+      // Response shape: { success, result: SrcResponse<SrcGoodListResult> }
+      // SrcResponse wraps: { code, result: { goodLists: [...] } }
+      type GoodListPayload = { result?: { result?: { goodLists?: Array<{ goods?: GoodItem[] }> } } };
+      const lists = (r.data as GoodListPayload).result?.result?.goodLists ?? [];
+      const goods = lists.flatMap((l) => l.goods ?? []);
+      setGoodList(goods);
+      if (goods.length === 0) setGoodListError("SRC returned an empty good list.");
+    } else {
+      setGoodListError((r.data.error as string) ?? "Failed to fetch good list from SRC.");
+    }
+  }
+
+  function selectGoodCode(good: GoodItem) {
+    setProdGoodCode(good.goodCode);
+    // ADG code is the HS chapter prefix — first 4 non-hyphen characters of goodCode
+    const adg = good.goodCode.replace("-", "").slice(0, 4);
+    setProdAdgCode(adg);
+    if (!prodName) setProdName(good.goodName.slice(0, 50));
+    if (!prodPrice && good.price > 0) setProdPrice(String(good.price));
+  }
   const firstDeptId = useMemo(
     () => restaurant.departments[0]?.id ?? "",
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -872,42 +912,31 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
         {step === 7 && (
           <div>
             <p className="text-sm text-gray-600 mb-3">
-              Configure tax departments in SRC. Each department has a number and a tax regime.
+              The system will register one department (dep 1, &ldquo;Main&rdquo;) with SRC automatically.
+              Select your tax regime — this is the only business-specific setting required.
             </p>
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 mb-3">
-              Tax regimes: 1 = VAT (ԱԱՀ), 2 = VAT-exempt, 3 = Turnover tax, 7 = Micro enterprise
+              Department number and name are fixed (dep 1 / &ldquo;Main&rdquo;) — the SRC ECR manual uses a single department for standard setups. Only the tax regime reflects your business type.
             </div>
             {restaurant.departments.length > 0 && (
               <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ Configured: {restaurant.departments.map((d) => `${d.name} (dep ${d.taxDepartmentId}, regime ${d.taxRegime})`).join(", ")}
+                ✓ Already configured: dep 1, regime {restaurant.departments[0]?.taxRegime}
               </div>
             )}
-            <div className="grid grid-cols-3 gap-3 mb-4">
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Department name</span>
-                <input value={deptName} onChange={(e) => setDeptName(e.target.value)} placeholder="Main Hall"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Dept number</span>
-                <input value={deptTaxId} onChange={(e) => setDeptTaxId(e.target.value)} placeholder="1"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Tax regime</span>
-                <select value={deptRegime} onChange={(e) => setDeptRegime(e.target.value)}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
-                  <option value="1">1 — VAT</option>
-                  <option value="2">2 — VAT-exempt</option>
-                  <option value="3">3 — Turnover</option>
-                  <option value="7">7 — Micro</option>
-                </select>
-              </label>
-            </div>
+            <label className="flex flex-col gap-1 mb-4 max-w-xs">
+              <span className="text-sm font-medium text-gray-700">Your tax regime</span>
+              <select value={deptRegime} onChange={(e) => setDeptRegime(e.target.value)}
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                <option value="1">1 — VAT (ԱԱՀ) — most businesses</option>
+                <option value="2">2 — VAT-exempt</option>
+                <option value="3">3 — Turnover tax</option>
+                <option value="7">7 — Micro enterprise</option>
+              </select>
+            </label>
             <ResultBanner result={result} />
             <div className="flex gap-2">
               <button onClick={() => goTo(6)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
-              <StepButton onClick={doConfigureDepts} loading={loading} label="Save & sync to SRC" />
+              <StepButton onClick={doConfigureDepts} loading={loading} label="Configure department automatically" />
               {restaurant.departments.length > 0 && (
                 <button onClick={() => goTo(8)} className="px-4 py-2 text-sm text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50">
                   Skip (already done) →
@@ -916,7 +945,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
             </div>
             {result?.ok && (
               <button onClick={() => goTo(8)} className="mt-3 text-sm text-blue-600 hover:underline block">
-                Departments configured → Activate ECR (step 8)
+                Department configured → Activate ECR (step 8)
               </button>
             )}
           </div>
@@ -956,34 +985,25 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
         {step === 9 && (
           <div>
             <p className="text-sm text-gray-600 mb-3">
-              Add the cashier registered in the SRC cabinet. The Tax Cashier ID comes from the u6 application.
+              Enter the Tax Cashier ID assigned by SRC. Name and PIN are set automatically.
             </p>
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-700 mb-4">
+              <strong>Why manual input is required here:</strong> The SRC API has no endpoint to fetch registered cashier IDs.
+              The Tax Cashier ID is assigned by SRC when you register a person in the taxpayer cabinet (u6 → Cashiers section).
+              Open your SRC cabinet → ECR page → Cashiers to find the ID.
+            </div>
             {restaurant.cashiers.length > 0 && (
               <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
-                ✓ Cashier(s): {restaurant.cashiers.map((c) => `${c.name} (ID: ${c.taxCashierId})`).join(", ")}
+                ✓ Cashier added (ID: {restaurant.cashiers[0]?.taxCashierId})
               </div>
             )}
-            <div className="flex flex-col gap-3 mb-4">
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Cashier name</span>
-                <input value={cashierName} onChange={(e) => setCashierName(e.target.value)}
-                  placeholder="e.g. Main Cashier"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Tax Cashier ID (from SRC cabinet)</span>
-                <input value={cashierTaxId} onChange={(e) => setCashierTaxId(e.target.value)}
-                  placeholder="e.g. 3"
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-                <span className="text-xs text-gray-400">ՀNEH → ECR page → Cashiers section</span>
-              </label>
-              <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">PIN code (for local login)</span>
-                <input value={cashierPin} onChange={(e) => setCashierPin(e.target.value)}
-                  placeholder="4+ digits" maxLength={12}
-                  className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
-              </label>
-            </div>
+            <label className="flex flex-col gap-1 mb-4 max-w-xs">
+              <span className="text-sm font-medium text-gray-700">Tax Cashier ID <span className="text-red-500">*</span></span>
+              <input value={cashierTaxId} onChange={(e) => setCashierTaxId(e.target.value)}
+                placeholder="e.g. 1"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+              <span className="text-xs text-gray-400">SRC cabinet → ECR page → Cashiers section</span>
+            </label>
             <ResultBanner result={result} />
             <div className="flex gap-2">
               <button onClick={() => goTo(8)} className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50">← Back</button>
@@ -1005,9 +1025,45 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
         {/* ---- Step 10: Add Products ---- */}
         {step === 10 && (
           <div>
-            <p className="text-sm text-gray-600 mb-4">
-              Add at least one product with its SRC good code and ADG code.
+            <p className="text-sm text-gray-600 mb-3">
+              Add at least one product. Good code and ADG code are required by SRC for every fiscal receipt line.
+              Fetch the code list from SRC to select instead of typing.
             </p>
+
+            {/* Fetch good list from SRC */}
+            <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+              <div className="flex items-center gap-3 mb-2">
+                <span className="text-sm font-medium text-gray-700">SRC product catalogue</span>
+                <button
+                  onClick={doFetchGoodList}
+                  disabled={goodListLoading || !restaurant.crn}
+                  className="px-3 py-1.5 bg-blue-600 text-white rounded text-xs font-medium hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {goodListLoading ? "Fetching…" : "Fetch good list from SRC"}
+                </button>
+              </div>
+              {goodListError && <p className="text-xs text-amber-700">{goodListError}</p>}
+              {goodList.length > 0 && (
+                <div>
+                  <p className="text-xs text-gray-500 mb-1">{goodList.length} items — select one to auto-fill good code and ADG code:</p>
+                  <select
+                    size={Math.min(goodList.length, 5)}
+                    onChange={(e) => {
+                      const g = goodList[Number(e.target.value)];
+                      if (g) selectGoodCode(g);
+                    }}
+                    className="w-full text-xs border border-gray-300 rounded p-1 font-mono"
+                    defaultValue=""
+                  >
+                    <option value="" disabled>— select a good —</option>
+                    {goodList.map((g, i) => (
+                      <option key={i} value={i}>{g.goodCode} — {g.goodName} ({g.price} AMD)</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+
             {restaurant.products.length > 0 && (
               <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
                 ✓ {restaurant.products.length} product(s) already added.
@@ -1021,16 +1077,18 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm" />
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">Good code (SRC list)</span>
+                <span className="text-sm font-medium text-gray-700">Good code <span className="text-red-500">*</span></span>
                 <input value={prodGoodCode} onChange={(e) => setProdGoodCode(e.target.value)}
-                  placeholder="e.g. 2106-90"
+                  placeholder="e.g. 2106-90 (required by SRC)"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                <span className="text-xs text-gray-400">Required — fetched from SRC good list or entered manually</span>
               </label>
               <label className="flex flex-col gap-1">
-                <span className="text-sm font-medium text-gray-700">ADG code (ԱՏԳ)</span>
+                <span className="text-sm font-medium text-gray-700">ADG code (ԱՏԳ) <span className="text-red-500">*</span></span>
                 <input value={prodAdgCode} onChange={(e) => setProdAdgCode(e.target.value)}
                   placeholder="e.g. 2106"
                   className="border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono" />
+                <span className="text-xs text-gray-400">Auto-filled from good code prefix when fetching from SRC</span>
               </label>
               <label className="flex flex-col gap-1">
                 <span className="text-sm font-medium text-gray-700">Unit</span>
