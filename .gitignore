@@ -42,3 +42,4 @@ src-certificates/
 *.pfx
 *.pem
 *.key
+.vercel

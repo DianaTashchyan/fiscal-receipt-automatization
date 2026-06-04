@@ -16,18 +16,29 @@ type LookupResult = {
   error?: string;
 };
 
+type LookupState =
+  | { stage: "idle" }
+  | { stage: "loading" }
+  | { stage: "notfound"; tin: string }
+  | { stage: "error"; message: string }
+  | { stage: "done"; result: LookupResult };
+
 export default function NewRestaurantPage() {
   const router = useRouter();
   const [tin, setTin] = useState("");
-  const [lookupLoading, setLookupLoading] = useState(false);
-  const [lookupResult, setLookupResult] = useState<LookupResult | null>(null);
-  const [lookupError, setLookupError] = useState("");
+  const [lookup, setLookup] = useState<LookupState>({ stage: "idle" });
 
+  // Only shown / editable after lookup
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
 
   const [submitLoading, setSubmitLoading] = useState(false);
   const [submitError, setSubmitError] = useState("");
+
+  const tinValid = /^\d{8}$/.test(tin.trim());
+  const lookupDone = lookup.stage === "done";
+  // Save is enabled only when lookup produced name+address (or user edited them in after a failed lookup)
+  const canSave = lookupDone && name.trim().length > 0 && address.trim().length > 0;
 
   function getToken() {
     if (typeof window === "undefined") return null;
@@ -35,49 +46,37 @@ export default function NewRestaurantPage() {
   }
 
   async function handleLookup() {
-    const trimmed = tin.trim();
-    if (!/^\d{8}$/.test(trimmed)) {
-      setLookupError("TIN must be exactly 8 digits.");
-      return;
-    }
-    setLookupLoading(true);
-    setLookupError("");
-    setLookupResult(null);
+    if (!tinValid) return;
+    setLookup({ stage: "loading" });
+    setName("");
+    setAddress("");
+    setSubmitError("");
 
     try {
-      const res = await fetch(`/api/taxpayer/${trimmed}`, {
+      const res = await fetch(`/api/taxpayer/${tin.trim()}`, {
         headers: { Authorization: `Bearer ${getToken()}` },
       });
       const data: LookupResult = await res.json();
 
       if (!res.ok) {
-        setLookupError((data as { error?: string }).error ?? "Lookup failed");
-        setLookupLoading(false);
+        setLookup({ stage: "error", message: (data as { error?: string }).error ?? "Lookup failed" });
         return;
       }
-
       if (data.notFound) {
-        setLookupError(`TIN ${trimmed} was not found in the Armenian company register. Check the TIN and try again.`);
-        setLookupLoading(false);
+        setLookup({ stage: "notfound", tin: tin.trim() });
         return;
       }
 
-      setLookupResult(data);
-      if (data.name) setName(data.name);
-      if (data.address) setAddress(data.address);
-      if (data.error) setLookupError(data.error);
+      setLookup({ stage: "done", result: data });
+      setName(data.name ?? "");
+      setAddress(data.address ?? "");
     } catch {
-      setLookupError("Network error — could not reach the taxpayer lookup service.");
-    } finally {
-      setLookupLoading(false);
+      setLookup({ stage: "error", message: "Network error — could not reach the lookup service." });
     }
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) { setSubmitError("Company name is required."); return; }
-    if (!address.trim()) { setSubmitError("Address is required."); return; }
-
+  async function handleSubmit() {
+    if (!canSave) return;
     setSubmitLoading(true);
     setSubmitError("");
     try {
@@ -99,25 +98,19 @@ export default function NewRestaurantPage() {
     }
   }
 
-  const tinValid = /^\d{8}$/.test(tin.trim());
-  const canCreate = tinValid && name.trim() && address.trim();
-
   return (
-    <div className="max-w-xl">
+    <div className="max-w-lg">
       <div className="mb-6">
-        <Link href="/admin/restaurants" className="text-sm text-gray-500 hover:text-gray-700">
-          ← Restaurants
-        </Link>
+        <Link href="/admin/restaurants" className="text-sm text-gray-500 hover:text-gray-700">← Restaurants</Link>
         <h1 className="text-2xl font-bold text-gray-900 mt-2">New Restaurant</h1>
         <p className="text-gray-500 text-sm mt-1">
-          Enter the TIN to look up company data from the Armenian company register, then start the SRC onboarding wizard.
-          CRN is not needed at this stage.
+          Enter the company TIN to look up registration data automatically.
         </p>
       </div>
 
       <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
 
-        {/* TIN + lookup */}
+        {/* Step 1: TIN + Lookup */}
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             TIN (ՀVHH) <span className="text-red-500">*</span>
@@ -125,90 +118,106 @@ export default function NewRestaurantPage() {
           <div className="flex gap-2">
             <input
               value={tin}
-              onChange={(e) => { setTin(e.target.value); setLookupResult(null); setLookupError(""); }}
-              placeholder="8-digit taxpayer ID, e.g. 02938868"
+              onChange={(e) => {
+                setTin(e.target.value.replace(/\D/g, "").slice(0, 8));
+                if (lookup.stage !== "idle") {
+                  setLookup({ stage: "idle" });
+                  setName("");
+                  setAddress("");
+                }
+              }}
+              placeholder="8-digit TIN, e.g. 02938868"
               maxLength={8}
-              pattern="\d{8}"
+              inputMode="numeric"
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <button
               type="button"
               onClick={handleLookup}
-              disabled={!tinValid || lookupLoading}
+              disabled={!tinValid || lookup.stage === "loading"}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap"
             >
-              {lookupLoading ? "Looking up…" : "Lookup company"}
+              {lookup.stage === "loading" ? "Looking up…" : "Lookup company"}
             </button>
           </div>
-          {lookupLoading && (
-            <p className="text-xs text-gray-500 mt-1 animate-pulse">Querying e-register.moj.am…</p>
-          )}
-          <p className="text-xs text-gray-400 mt-1">From SRC cabinet → company profile</p>
+          <p className="text-xs text-gray-400 mt-1">8 digits — from your SRC cabinet (ՀNEH)</p>
         </div>
 
-        {/* Error */}
-        {lookupError && (
+        {/* Loading */}
+        {lookup.stage === "loading" && (
+          <p className="text-xs text-blue-600 animate-pulse">Querying Armenian company register…</p>
+        )}
+
+        {/* Not found */}
+        {lookup.stage === "notfound" && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
-            {lookupError}
+            TIN <code className="font-mono">{lookup.tin}</code> was not found in the Armenian company register.
+            Double-check the TIN and try again.
           </div>
         )}
 
-        {/* Success banner + registry data */}
-        {lookupResult && !lookupResult.notFound && (
-          <div className={`px-3 py-2 rounded-lg text-xs border ${
-            lookupResult.isMock
-              ? "bg-yellow-50 border-yellow-300 text-yellow-800"
-              : "bg-green-50 border-green-300 text-green-800"
-          }`}>
-            {lookupResult.isMock
-              ? <><span className="font-mono font-bold">[MOCK]</span> {lookupResult.error ?? "Using mock data."}</>
-              : "Company data loaded from Armenian Ministry of Justice register."}
-            {(lookupResult.registrationNumber || lookupResult.registrationDate) && (
-              <dl className="mt-1 grid grid-cols-2 gap-x-3 gap-y-0.5 text-[11px] opacity-80">
-                {lookupResult.registrationNumber && (
-                  <><dt>Reg. number</dt><dd className="font-mono">{lookupResult.registrationNumber}</dd></>
-                )}
-                {lookupResult.registrationDate && (
-                  <><dt>Reg. date</dt><dd>{lookupResult.registrationDate}</dd></>
-                )}
-              </dl>
-            )}
+        {/* Network/parse error */}
+        {lookup.stage === "error" && (
+          <div className="px-4 py-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-sm">
+            {lookup.message}
           </div>
         )}
 
-        {/* Editable name */}
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-gray-700">
-            Company name <span className="text-red-500">*</span>
-          </span>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. «GLANA» LLC"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          {lookupResult?.isMock && (
-            <span className="text-xs text-yellow-600">Pre-filled from MOCK — update with your real company name.</span>
-          )}
-        </label>
+        {/* Success: auto-filled fields */}
+        {lookup.stage === "done" && (
+          <>
+            {/* Source banner */}
+            <div className={`px-3 py-2 rounded-lg text-xs border ${
+              lookup.result.isMock
+                ? "bg-yellow-50 border-yellow-300 text-yellow-800"
+                : "bg-green-50 border-green-300 text-green-800"
+            }`}>
+              {lookup.result.isMock
+                ? <><span className="font-mono font-bold">[MOCK]</span> Using mock data — e-register unavailable. Update the fields below with real data before saving.</>
+                : "Company data loaded from the Armenian Ministry of Justice register."}
+              {!lookup.result.isMock && lookup.result.registrationNumber && (
+                <span className="ml-2 opacity-75">
+                  Reg. {lookup.result.registrationNumber}
+                  {lookup.result.registrationDate ? ` · ${lookup.result.registrationDate}` : ""}
+                </span>
+              )}
+            </div>
 
-        {/* Editable address */}
-        <label className="flex flex-col gap-1">
-          <span className="text-sm font-medium text-gray-700">
-            Legal address <span className="text-red-500">*</span>
-          </span>
-          <input
-            value={address}
-            onChange={(e) => setAddress(e.target.value)}
-            placeholder="e.g. Yerevan, Byron St. 1/1"
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-        </label>
+            {/* Company name — auto-filled, editable */}
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-gray-700">
+                Company name <span className="text-red-500">*</span>
+              </span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Company name"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">Auto-filled from registry — edit if needed.</span>
+            </label>
 
-        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-700">
-          <strong>CRN is not needed yet.</strong> The Cash Register Number is issued by SRC only after your u6 application is approved.
-          You will enter it in the onboarding wizard after the CSR step.
-        </div>
+            {/* Address — auto-filled, editable */}
+            <label className="flex flex-col gap-1">
+              <span className="text-sm font-medium text-gray-700">
+                Legal address <span className="text-red-500">*</span>
+              </span>
+              <input
+                value={address}
+                onChange={(e) => setAddress(e.target.value)}
+                placeholder="Legal address"
+                className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <span className="text-xs text-gray-400">
+                Address is in Armenian script as registered. You may transliterate for internal use.
+              </span>
+            </label>
+
+            <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 text-xs text-blue-700">
+              <strong>CRN is not needed yet.</strong> The Cash Register Number is issued by SRC after your u6 application is approved — enter it later in the onboarding wizard.
+            </div>
+          </>
+        )}
 
         {submitError && (
           <div className="px-4 py-3 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
@@ -220,10 +229,11 @@ export default function NewRestaurantPage() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!canCreate || submitLoading}
-            className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-60 transition-colors"
+            disabled={!canSave || submitLoading}
+            title={!lookupDone ? "Look up the TIN first" : !name.trim() || !address.trim() ? "Company name and address are required" : undefined}
+            className="flex-1 py-2.5 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
-            {submitLoading ? "Saving…" : "Save & Start Onboarding →"}
+            {submitLoading ? "Saving…" : lookupDone ? "Save & Start Onboarding →" : "Look up TIN first"}
           </button>
           <Link
             href="/admin/restaurants"

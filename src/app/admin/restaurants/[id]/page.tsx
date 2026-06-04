@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import prisma from "@/lib/prisma/client";
+import DeleteRestaurantButton from "./delete-button";
 
 export const dynamic = "force-dynamic";
 
@@ -91,6 +92,12 @@ export default async function RestaurantDetailPage({ params }: Props) {
           </Link>
         </div>
       )}
+
+      {/* Danger zone */}
+      <div className="mt-6 border border-red-200 rounded-xl p-4">
+        <h3 className="text-sm font-semibold text-red-700 mb-2">Danger zone</h3>
+        <DeleteRestaurantButton id={id} name={restaurant.name} />
+      </div>
     </div>
   );
 }

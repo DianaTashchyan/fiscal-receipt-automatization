@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
-import { requireRestaurantAccess } from "@/lib/utils/auth";
+import { requireAuth, requireRestaurantAccess } from "@/lib/utils/auth";
 import { isValidTin } from "@/lib/src/validation";
+import { UserRole } from "@prisma/client";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -63,6 +64,36 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     });
 
     return NextResponse.json(restaurant);
+  } catch (err) {
+    if (err instanceof NextResponse) return err;
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: NextRequest, { params }: RouteContext) {
+  try {
+    const { id } = await params;
+
+    // Only admins can delete restaurants
+    const payload = await requireAuth(req);
+    if (payload.role !== UserRole.ADMIN) {
+      return NextResponse.json({ error: "Admin access required to delete a restaurant" }, { status: 403 });
+    }
+
+    const restaurant = await prisma.restaurant.findUnique({
+      where: { id },
+      select: { id: true, name: true },
+    });
+
+    if (!restaurant) {
+      return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
+    }
+
+    // Cascade deletes (apiKeys, cashiers, departments, products, receipts, events)
+    // are handled by Prisma onDelete: Cascade defined in the schema.
+    await prisma.restaurant.delete({ where: { id } });
+
+    return NextResponse.json({ success: true, deleted: { id, name: restaurant.name } });
   } catch (err) {
     if (err instanceof NextResponse) return err;
     return NextResponse.json({ error: "Internal server error" }, { status: 500 });
