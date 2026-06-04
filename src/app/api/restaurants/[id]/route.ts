@@ -36,13 +36,17 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await requireRestaurantAccess(req, id);
 
     const body = await req.json();
-    const { name, tin, crn, address, logoUrl, isActive } = body;
+    const { name, tin, crn, address, logoUrl, isActive, srcOnboardingStep } = body;
 
     if (tin !== undefined && !isValidTin(tin)) {
       return NextResponse.json({ error: "tin must be an 8-digit number" }, { status: 400 });
     }
-    if (crn !== undefined && (typeof crn !== "string" || crn.trim() === "")) {
+    // crn: allow setting to non-empty string or clearing (null/empty string resets to null)
+    if (crn !== undefined && crn !== null && crn !== "" && (typeof crn !== "string" || crn.trim() === "")) {
       return NextResponse.json({ error: "crn must be a non-empty string" }, { status: 400 });
+    }
+    if (srcOnboardingStep !== undefined && (!Number.isInteger(srcOnboardingStep) || srcOnboardingStep < 0 || srcOnboardingStep > 13)) {
+      return NextResponse.json({ error: "srcOnboardingStep must be an integer 0–13" }, { status: 400 });
     }
 
     const restaurant = await prisma.restaurant.update({
@@ -50,10 +54,11 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       data: {
         ...(name !== undefined && { name: String(name).trim() }),
         ...(tin !== undefined && { tin: String(tin).trim() }),
-        ...(crn !== undefined && { crn: String(crn).trim() }),
+        ...(crn !== undefined && { crn: crn === null || crn === "" ? null : String(crn).trim() }),
         ...(address !== undefined && { address: String(address).trim() }),
         ...(logoUrl !== undefined && { logoUrl: logoUrl ?? null }),
         ...(isActive !== undefined && { isActive: Boolean(isActive) }),
+        ...(srcOnboardingStep !== undefined && { srcOnboardingStep: Number(srcOnboardingStep) }),
       },
     });
 

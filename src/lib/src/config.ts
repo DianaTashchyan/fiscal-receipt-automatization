@@ -141,7 +141,7 @@ export function getRealCertConfig(): RealCertConfig {
 export type RestaurantCertFields = {
   id: string;
   tin: string;
-  crn: string;
+  crn: string | null;   // null until CRN is received from SRC after u6 approval
   // Prisma Bytes type maps to Uint8Array at runtime (not Buffer)
   srcCertData: Uint8Array | null;
   srcCertPassword: string | null;

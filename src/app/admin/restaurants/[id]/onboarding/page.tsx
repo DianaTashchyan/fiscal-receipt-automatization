@@ -19,17 +19,19 @@ export default async function OnboardingPage({ params }: Props) {
       cashiers:    { where: { isActive: true }, select: { id: true, name: true, taxCashierId: true, isDefault: true } },
       departments: { where: { isActive: true }, select: { id: true, name: true, taxDepartmentId: true, taxRegime: true } },
       products:    { where: { isActive: true }, take: 5, select: { id: true, name: true } },
+      apiKeys:     { where: { isActive: true }, select: { id: true, label: true } },
     },
   });
 
   if (!restaurant) notFound();
 
-  // Serialise the restaurant into plain JSON (removes Buffer fields for client)
+  const isMockMode = process.env.TAX_API_MODE !== "src_real";
+
   const data = {
     id: restaurant.id,
     name: restaurant.name,
     tin: restaurant.tin,
-    crn: restaurant.crn,
+    crn: restaurant.crn ?? null,
     address: restaurant.address,
     hasCsr: !!restaurant.srcCsrPem,
     csrCreatedAt: restaurant.srcCsrCreatedAt?.toISOString() ?? null,
@@ -39,6 +41,8 @@ export default async function OnboardingPage({ params }: Props) {
     cashiers: restaurant.cashiers,
     departments: restaurant.departments,
     products: restaurant.products,
+    hasApiKey: restaurant.apiKeys.length > 0,
+    isMockMode,
   };
 
   return <OnboardingWizard restaurant={data} />;

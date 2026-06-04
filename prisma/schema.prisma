@@ -64,7 +64,7 @@ model Restaurant {
   id          String             @id @default(cuid())
   name        String
   tin         String
-  crn         String
+  crn         String?   // null until received from SRC after u6 approval
   address     String
   logoUrl     String?
   isActive    Boolean            @default(true)
