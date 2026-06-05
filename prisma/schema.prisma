@@ -82,6 +82,7 @@ model Restaurant {
   // ---- SRC cabinet registration fields (entered in SRC cabinet form u6) ----
   platformName      String?   // Software name — SRC cabinet field 5.4
   websiteUrl        String?   // HTTPS URL — SRC cabinet field 5.3
+  srcIpAddress      String?   // IPv4 resolved from websiteUrl hostname (cached; cleared on URL change)
 
   // ---- CSR / onboarding ----
   srcPrivateKeyEnc  String?   // RSA private key, AES-256-GCM encrypted with CERT_ENCRYPTION_KEY

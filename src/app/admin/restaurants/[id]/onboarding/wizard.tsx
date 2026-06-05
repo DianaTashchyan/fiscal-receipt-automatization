@@ -1298,10 +1298,14 @@ function SrcCabinetPanel({
     setTimeout(() => setCopied((c) => (c === "all" ? null : c)), 2000);
   }
 
-  const rows: { field: string; label: string; value: string | null; key: string }[] = [
-    { field: "5.2", label: "IP address",    value: outboundIp,   key: "ip" },
-    { field: "5.3", label: "Website URL",   value: websiteUrl,   key: "url" },
-    { field: "5.4", label: "Platform name", value: platformName, key: "platform" },
+  const ipHint = outboundIp && websiteUrl
+    ? (() => { try { return `resolved from ${new URL(websiteUrl).hostname}`; } catch { return null; } })()
+    : null;
+
+  const rows: { field: string; label: string; value: string | null; hint: string | null; key: string }[] = [
+    { field: "5.2", label: "IP address",    value: outboundIp,   hint: ipHint,  key: "ip" },
+    { field: "5.3", label: "Website URL",   value: websiteUrl,   hint: null,    key: "url" },
+    { field: "5.4", label: "Platform name", value: platformName, hint: null,    key: "platform" },
   ];
 
   return (
@@ -1326,13 +1330,16 @@ function SrcCabinetPanel({
       </div>
 
       <div className="divide-y divide-gray-100">
-        {rows.map(({ field, label, value, key }) => (
+        {rows.map(({ field, label, value, hint, key }) => (
           <div key={key} className="flex items-center gap-3 px-4 py-3">
             <span className="shrink-0 w-10 text-xs font-mono font-bold text-gray-400">{field}</span>
             <span className="w-28 shrink-0 text-xs font-medium text-gray-500">{label}</span>
             {value ? (
               <>
-                <code className="flex-1 text-xs font-mono text-gray-800 truncate">{value}</code>
+                <div className="flex-1 min-w-0">
+                  <code className="block text-xs font-mono text-gray-800 truncate">{value}</code>
+                  {hint && <span className="text-[10px] text-gray-400">{hint}</span>}
+                </div>
                 <button
                   onClick={() => copy(value, key)}
                   className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
@@ -1356,7 +1363,21 @@ function SrcCabinetPanel({
           <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
             <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
           </svg>
-          <span><strong>OUTBOUND_IP is not configured.</strong> Set it to the server IP registered in SRC (the static outbound IP of this deployment).</span>
+          {websiteUrl ? (
+            <span>
+              <strong>Could not resolve IP for {(() => { try { return new URL(websiteUrl).hostname; } catch { return websiteUrl; } })()}.</strong>{" "}
+              Check that the Website URL is reachable and has a public DNS A record, then refresh this page.
+            </span>
+          ) : (
+            <span>
+              <strong>IP address not resolved.</strong>{" "}
+              {onGoToStep1 ? (
+                <>Enter a <button onClick={onGoToStep1} className="underline font-semibold">Website URL in step 1</button> — the IP will be resolved automatically from its hostname.</>
+              ) : (
+                "Enter a Website URL in step 1 — the IP will be resolved automatically from its hostname."
+              )}
+            </span>
+          )}
         </div>
       )}
 

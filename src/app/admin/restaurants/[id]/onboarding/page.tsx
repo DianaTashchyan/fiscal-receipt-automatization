@@ -1,24 +1,21 @@
 import { notFound } from "next/navigation";
+import { promises as dns } from "dns";
 import prisma from "@/lib/prisma/client";
 import OnboardingWizard from "./wizard";
 
 export const dynamic = "force-dynamic";
 
-let _detectedIp: string | null | undefined = undefined;
-
-async function getOutboundIp(): Promise<string | null> {
-  if (process.env.OUTBOUND_IP) return process.env.OUTBOUND_IP;
-  if (_detectedIp !== undefined) return _detectedIp;
+// Resolve the first IPv4 address for the hostname in websiteUrl.
+// Returns the IP string on success, null on failure (DNS error / no A records).
+async function resolveWebsiteIp(websiteUrl: string): Promise<string | null> {
   try {
-    const controller = new AbortController();
-    const tid = setTimeout(() => controller.abort(), 3000);
-    const res = await fetch("https://api.ipify.org?format=text", { signal: controller.signal });
-    clearTimeout(tid);
-    _detectedIp = res.ok ? (await res.text()).trim() : null;
+    const hostname = new URL(websiteUrl).hostname;
+    if (!hostname) return null;
+    const addresses = await dns.resolve4(hostname);
+    return addresses[0] ?? null;
   } catch {
-    _detectedIp = null;
+    return null;
   }
-  return _detectedIp;
 }
 
 type Props = { params: Promise<{ id: string }> };
@@ -30,7 +27,7 @@ export default async function OnboardingPage({ params }: Props) {
     where: { id },
     select: {
       id: true, name: true, tin: true, crn: true, address: true,
-      platformName: true, websiteUrl: true,
+      platformName: true, websiteUrl: true, srcIpAddress: true,
       srcCsrPem: true, srcCsrCreatedAt: true,
       srcCertData: true, srcCertPath: true, srcConfiguredAt: true,
       srcOnboardingStep: true,
@@ -42,6 +39,16 @@ export default async function OnboardingPage({ params }: Props) {
 
   if (!restaurant) notFound();
 
+  // Resolve IP from websiteUrl hostname and cache to DB.
+  // Cleared automatically when websiteUrl is updated via PATCH.
+  let ipAddress = restaurant.srcIpAddress ?? null;
+  if (ipAddress === null && restaurant.websiteUrl) {
+    ipAddress = await resolveWebsiteIp(restaurant.websiteUrl);
+    if (ipAddress) {
+      await prisma.restaurant.update({ where: { id }, data: { srcIpAddress: ipAddress } });
+    }
+  }
+
   const isMockMode = process.env.TAX_API_MODE !== "src_real";
 
   const data = {
@@ -52,7 +59,7 @@ export default async function OnboardingPage({ params }: Props) {
     address: restaurant.address,
     platformName: restaurant.platformName ?? null,
     websiteUrl: restaurant.websiteUrl ?? null,
-    outboundIp: await getOutboundIp(),
+    outboundIp: ipAddress,
     hasCsr: !!restaurant.srcCsrPem,
     csrCreatedAt: restaurant.srcCsrCreatedAt?.toISOString() ?? null,
     hasCert: !!(restaurant.srcCertData || restaurant.srcCertPath),

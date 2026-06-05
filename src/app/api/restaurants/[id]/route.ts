@@ -64,7 +64,10 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         ...(isActive !== undefined && { isActive: Boolean(isActive) }),
         ...(srcOnboardingStep !== undefined && { srcOnboardingStep: Number(srcOnboardingStep) }),
         ...(platformName !== undefined && { platformName: platformName === null || platformName === "" ? null : String(platformName).trim() }),
-        ...(websiteUrl !== undefined && { websiteUrl: websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim() }),
+        ...(websiteUrl !== undefined && {
+          websiteUrl: websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim(),
+          srcIpAddress: null,  // clear cached DNS resolution; re-resolved on next page load
+        }),
       },
     });
 
