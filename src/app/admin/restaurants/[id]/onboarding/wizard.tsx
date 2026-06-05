@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import Link from "next/link";
 import type { AutoConfigStatus } from "@/app/api/restaurants/[id]/post-cert-configure/route";
 
@@ -103,7 +103,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   function stepStatus(n: number): "completed" | "active" | "pending" {
-    const dbThreshold = [0, 2, 2, 3, 5, 9, 11, 12][n] ?? 12;
+    const dbThreshold = [0, 1, 2, 3, 5, 9, 11, 12][n] ?? 12;
     if (restaurant.onboardingStep >= dbThreshold) return "completed";
     if (step === n) return "active";
     return "pending";
@@ -276,7 +276,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 
   async function doSaveCompany() {
     if (!companyName.trim() || !companyAddress.trim()) { setResult({ ok: false, message: "Company name and address are required." }); return; }
-    if (websiteUrlInput.trim() && !/^https?:\/\/.+/.test(websiteUrlInput.trim())) {
+    if (websiteUrlInput.trim() && !/^https:\/\/.+/.test(websiteUrlInput.trim())) {
       setResult({ ok: false, message: "Website URL must start with https://" }); return;
     }
     setLoading(true); setResult(null);
@@ -420,6 +420,15 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     !!cashier && !!cashier.taxCashierId &&
     restaurant.hasApiKey
   );
+
+  // Mark onboarding complete (dbStep 12) as soon as step 7 is reached and all checks pass.
+  useEffect(() => {
+    if (step === 7 && isReallyComplete && restaurant.onboardingStep < 12) {
+      advanceDbStep(12);
+    }
+  // advanceDbStep is stable (only uses restaurant.id which doesn't change)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, isReallyComplete]);
 
   // ── SESSION EXPIRED ─────────────────────────────────────────────────────────
   if (sessionExpired) {
@@ -601,28 +610,18 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               </div>
 
               <div className="space-y-4">
-                <FormField label="Company name" hint={lookupMeta && !lookupMeta.notFound ? "From registry — read-only" : undefined}>
+                <FormField label="Company name" hint="From registry — read-only">
                   <input
                     value={companyName}
-                    onChange={(e) => setCompanyName(e.target.value)}
-                    readOnly={!!(lookupMeta && !lookupMeta.notFound)}
-                    className={`w-full border rounded-lg px-3.5 py-2.5 text-sm transition-colors ${
-                      lookupMeta && !lookupMeta.notFound
-                        ? "border-gray-200 bg-gray-100 text-gray-600 cursor-default select-all"
-                        : "border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    }`}
+                    readOnly
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-100 text-gray-600 cursor-default select-all"
                   />
                 </FormField>
-                <FormField label="Legal address" hint={lookupMeta && !lookupMeta.notFound ? "From registry — read-only" : undefined}>
+                <FormField label="Legal address" hint="From registry — read-only">
                   <input
                     value={companyAddress}
-                    onChange={(e) => setCompanyAddress(e.target.value)}
-                    readOnly={!!(lookupMeta && !lookupMeta.notFound)}
-                    className={`w-full border rounded-lg px-3.5 py-2.5 text-sm transition-colors ${
-                      lookupMeta && !lookupMeta.notFound
-                        ? "border-gray-200 bg-gray-100 text-gray-600 cursor-default select-all"
-                        : "border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                    }`}
+                    readOnly
+                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-100 text-gray-600 cursor-default select-all"
                   />
                 </FormField>
                 <FormField label="Platform name" hint="SRC cabinet field 5.4">
@@ -651,7 +650,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                 onPrimary={doSaveCompany}
                 primaryLabel="Save and continue"
                 primaryLoading={loading}
-                onNext={result?.ok ? () => goTo(2) : undefined}
+                onNext={result?.ok || restaurant.onboardingStep >= 1 ? () => goTo(2) : undefined}
                 nextLabel="Go to step 2 →"
               />
             </div>
@@ -731,6 +730,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                 websiteUrl={restaurant.websiteUrl}
                 platformName={restaurant.platformName}
                 restaurantId={restaurant.id}
+                onGoToStep1={() => goTo(1)}
               />
 
               <div className="space-y-3">
@@ -1255,7 +1255,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                   href={`/admin/restaurants/${restaurant.id}`}
                   className="inline-flex items-center gap-2 px-5 py-2.5 bg-white border border-gray-200 text-gray-700 rounded-xl text-sm font-semibold hover:bg-gray-50 transition-colors"
                 >
-                  Restaurant dashboard
+                  Business dashboard
                 </Link>
               </div>
             </div>
@@ -1270,12 +1270,13 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 // ── SRC Cabinet registration panel ──────────────────────────────────────────────
 
 function SrcCabinetPanel({
-  outboundIp, websiteUrl, platformName, restaurantId,
+  outboundIp, websiteUrl, platformName, restaurantId, onGoToStep1,
 }: {
   outboundIp: string | null;
   websiteUrl: string | null;
   platformName: string | null;
   restaurantId: string;
+  onGoToStep1?: () => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
 
@@ -1302,8 +1303,6 @@ function SrcCabinetPanel({
     { field: "5.3", label: "Website URL",   value: websiteUrl,   key: "url" },
     { field: "5.4", label: "Platform name", value: platformName, key: "platform" },
   ];
-
-  const missingCount = rows.filter((r) => !r.value).length;
 
   return (
     <div className="border border-blue-200 rounded-xl overflow-hidden">
@@ -1361,12 +1360,18 @@ function SrcCabinetPanel({
         </div>
       )}
 
-      {missingCount > 0 && (websiteUrl === null || platformName === null) && (
+      {(websiteUrl === null || platformName === null) && (
         <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 text-xs text-gray-500">
-          {missingCount === 1 ? "1 field is" : `${missingCount} fields are`} not set.{" "}
-          <Link href={`/admin/restaurants/${restaurantId}/onboarding`} onClick={() => {}} className="text-blue-600 hover:underline font-medium">
-            Go back to step 1
-          </Link>{" "}
+          {[websiteUrl, platformName].filter((v) => v === null).length === 1 ? "1 field is" : "2 fields are"} not set.{" "}
+          {onGoToStep1 ? (
+            <button onClick={onGoToStep1} className="text-blue-600 hover:underline font-medium">
+              Go to step 1
+            </button>
+          ) : (
+            <Link href={`/admin/restaurants/${restaurantId}/onboarding`} className="text-blue-600 hover:underline font-medium">
+              Go to step 1
+            </Link>
+          )}{" "}
           to fill in the missing values.
         </div>
       )}

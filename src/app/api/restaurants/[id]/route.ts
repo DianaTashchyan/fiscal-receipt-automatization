@@ -49,7 +49,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     if (srcOnboardingStep !== undefined && (!Number.isInteger(srcOnboardingStep) || srcOnboardingStep < 0 || srcOnboardingStep > 13)) {
       return NextResponse.json({ error: "srcOnboardingStep must be an integer 0–13" }, { status: 400 });
     }
-    if (websiteUrl !== undefined && websiteUrl !== null && websiteUrl !== "" && !/^https?:\/\/.+/.test(String(websiteUrl))) {
+    if (websiteUrl !== undefined && websiteUrl !== null && websiteUrl !== "" && !/^https:\/\/.+/.test(String(websiteUrl))) {
       return NextResponse.json({ error: "websiteUrl must start with https://" }, { status: 400 });
     }
 

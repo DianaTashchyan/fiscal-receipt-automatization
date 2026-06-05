@@ -4,6 +4,23 @@ import OnboardingWizard from "./wizard";
 
 export const dynamic = "force-dynamic";
 
+let _detectedIp: string | null | undefined = undefined;
+
+async function getOutboundIp(): Promise<string | null> {
+  if (process.env.OUTBOUND_IP) return process.env.OUTBOUND_IP;
+  if (_detectedIp !== undefined) return _detectedIp;
+  try {
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 3000);
+    const res = await fetch("https://api.ipify.org?format=text", { signal: controller.signal });
+    clearTimeout(tid);
+    _detectedIp = res.ok ? (await res.text()).trim() : null;
+  } catch {
+    _detectedIp = null;
+  }
+  return _detectedIp;
+}
+
 type Props = { params: Promise<{ id: string }> };
 
 export default async function OnboardingPage({ params }: Props) {
@@ -35,7 +52,7 @@ export default async function OnboardingPage({ params }: Props) {
     address: restaurant.address,
     platformName: restaurant.platformName ?? null,
     websiteUrl: restaurant.websiteUrl ?? null,
-    outboundIp: process.env.OUTBOUND_IP ?? null,
+    outboundIp: await getOutboundIp(),
     hasCsr: !!restaurant.srcCsrPem,
     csrCreatedAt: restaurant.srcCsrCreatedAt?.toISOString() ?? null,
     hasCert: !!(restaurant.srcCertData || restaurant.srcCertPath),
