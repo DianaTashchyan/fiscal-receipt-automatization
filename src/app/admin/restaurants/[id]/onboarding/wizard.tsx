@@ -1,12 +1,11 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import type { AutoConfigStatus } from "@/app/api/restaurants/[id]/post-cert-configure/route";
 
 type Cashier    = { id: string; name: string; taxCashierId: string; isDefault: boolean };
 type Department = { id: string; name: string; taxDepartmentId: string; taxRegime: string };
-type Product    = { id: string; name: string };
 
 type RestaurantData = {
   id: string; name: string; tin: string; crn: string | null; address: string;
@@ -15,20 +14,18 @@ type RestaurantData = {
   onboardingStep: number;
   cashiers: Cashier[];
   departments: Department[];
-  products: Product[];
   hasApiKey: boolean;
   isMockMode: boolean;
 };
 
 const STEPS = [
-  { n: 1, title: "Company Info",     short: "Company",     description: "Verify your company by tax ID" },
-  { n: 2, title: "Generate CSR",     short: "CSR",         description: "Create your cryptographic key pair" },
-  { n: 3, title: "Register with SRC", short: "Register",   description: "Submit CSR to the SRC taxpayer portal" },
+  { n: 1, title: "Company Info",      short: "Company",     description: "Verify your company by tax ID" },
+  { n: 2, title: "Generate CSR",      short: "CSR",         description: "Create your cryptographic key pair" },
+  { n: 3, title: "Register with SRC", short: "Register",    description: "Submit CSR to the SRC taxpayer portal" },
   { n: 4, title: "Upload Certificate", short: "Certificate", description: "Upload the signed certificate from SRC" },
   { n: 5, title: "SRC Configuration", short: "Configure",   description: "Enter cashier ID and tax regime from your SRC cabinet" },
-  { n: 6, title: "Products",         short: "Products",    description: "Add products required for fiscal receipts" },
-  { n: 7, title: "API Key",          short: "API Key",     description: "Generate your POS integration key" },
-  { n: 8, title: "Complete",         short: "Done",        description: "Verify with a test receipt" },
+  { n: 6, title: "API Key",           short: "API Key",     description: "Generate your POS integration key" },
+  { n: 7, title: "Complete",          short: "Done",        description: "Setup complete — ready for fiscalization" },
 ];
 
 function taxRegimeName(regime: string): string {
@@ -66,12 +63,12 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (dbStep === 3) return 3;
     if (dbStep === 4) return 4;
     if (dbStep <= 9) return 5;
-    if (dbStep <= 10) return 6;
-    if (dbStep <= 11) return 7;
-    return 8;
+    if (dbStep <= 11) return 6;
+    return 7;
   }
 
   const initialStep = mapDbStepToWizard(restaurant.onboardingStep >= 12 ? 12 : restaurant.onboardingStep + 1);
+  // STEPS has 7 entries; goTo clamps to [1, 7]
   const [step, setStep]     = useState(initialStep);
   const [loading, setLoading] = useState(false);
   const [result, setResult]   = useState<{ ok: boolean; message: string } | null>(null);
@@ -92,12 +89,13 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
   }
 
   function goTo(n: number) {
-    setStep(Math.max(1, Math.min(n, 8)));
+    setStep(Math.max(1, Math.min(n, 7)));
     setResult(null);
   }
 
   function stepStatus(n: number): "completed" | "active" | "pending" {
-    const dbThreshold = [0, 2, 2, 3, 5, 9, 10, 11, 12][n] ?? 12;
+    // Index by step number: step 1→idx1, step 2→idx2, …, step 7→idx7
+    const dbThreshold = [0, 2, 2, 3, 5, 9, 11, 12][n] ?? 12;
     if (restaurant.onboardingStep >= dbThreshold) return "completed";
     if (step === n) return "active";
     return "pending";
@@ -340,75 +338,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     setLoading(false);
   }
 
-  // ── Step 6: Products ────────────────────────────────────────────────────────
-  const [prodName, setProdName]         = useState("");
-  const [prodGoodCode, setProdGoodCode] = useState("");
-  const [prodAdgCode, setProdAdgCode]   = useState("");
-  const [prodUnit, setProdUnit]         = useState("piece");
-  const [prodPrice, setProdPrice]       = useState("");
-
-  type GoodItem = { goodName: string; goodCode: string; price: number };
-  const [goodList, setGoodList]               = useState<GoodItem[]>([]);
-  const [goodListLoading, setGoodListLoading] = useState(false);
-  const [goodListError, setGoodListError]     = useState("");
-
-  async function doFetchGoodList() {
-    setGoodListLoading(true); setGoodListError("");
-    const r = await callApi("/api/src/get-good-list", "POST", {
-      crn: restaurant.crn,
-      tin: restaurant.tin,
-      taxRegime: Number(restaurant.departments[0]?.taxRegime ?? 1),
-      restaurantId: restaurant.id,
-    });
-    setGoodListLoading(false);
-    if (r.ok) {
-      type GoodListPayload = { result?: { result?: { goodLists?: Array<{ goods?: GoodItem[] }> } } };
-      const lists = (r.data as GoodListPayload).result?.result?.goodLists ?? [];
-      const goods = lists.flatMap((l) => l.goods ?? []);
-      setGoodList(goods);
-      if (goods.length === 0) setGoodListError("SRC returned an empty product list.");
-    } else {
-      setGoodListError((r.data.error as string) ?? "Failed to fetch product list from SRC.");
-    }
-  }
-
-  function selectGoodCode(good: GoodItem) {
-    setProdGoodCode(good.goodCode);
-    const adg = good.goodCode.replace("-", "").slice(0, 4);
-    setProdAdgCode(adg);
-    if (!prodName) setProdName(good.goodName.slice(0, 50));
-    if (!prodPrice && good.price > 0) setProdPrice(String(good.price));
-  }
-
-  const firstDeptId = useMemo(() => restaurant.departments[0]?.id ?? "", []); // eslint-disable-line react-hooks/exhaustive-deps
-  const [prodDeptId, setProdDeptId] = useState(firstDeptId);
-
-  async function doAddProduct() {
-    if (!prodName || !prodGoodCode || !prodAdgCode || !prodPrice) {
-      setResult({ ok: false, message: "Product name, good code, ADG code and price are all required." });
-      return;
-    }
-    const deptId = prodDeptId || restaurant.departments[0]?.id;
-    if (!deptId) {
-      setResult({ ok: false, message: "No department configured yet. Complete auto-setup first." });
-      return;
-    }
-    setLoading(true); setResult(null);
-    const r = await callApi(`/api/restaurants/${restaurant.id}/products`, "POST", {
-      name: prodName, goodCode: prodGoodCode, adgCode: prodAdgCode,
-      unit: prodUnit, price: Number(prodPrice), departmentId: deptId,
-    });
-    if (r.ok) {
-      setRestaurant((prev) => ({ ...prev, products: [...prev.products, { id: (r.data as { id: string }).id, name: prodName }] }));
-      setResult({ ok: true, message: `"${prodName}" added successfully.` });
-      await advanceDbStep(10);
-    } else {
-      setResult({ ok: false, message: (r.data.error as string) ?? "Failed to add product." });
-    }
-    setLoading(false);
-  }
-
-  // ── Step 7: API Key ─────────────────────────────────────────────────────────
+  // ── Step 6: API Key ─────────────────────────────────────────────────────────
   const [apiKey, setApiKey]     = useState<string | null>(null);
   const [keyCopied, setKeyCopied] = useState(false);
 
@@ -430,7 +360,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (apiKey) { await navigator.clipboard.writeText(apiKey); setKeyCopied(true); setTimeout(() => setKeyCopied(false), 2000); }
   }
 
-  const isReallyComplete = (restaurant.hasCert && restaurant.cashiers.length > 0 && restaurant.departments.length > 0 && restaurant.products.length > 0 && restaurant.hasApiKey);
+  const isReallyComplete = (restaurant.hasCert && restaurant.cashiers.length > 0 && restaurant.departments.length > 0 && restaurant.hasApiKey);
 
   // ── SESSION EXPIRED ─────────────────────────────────────────────────────────
   if (sessionExpired) {
@@ -1054,151 +984,14 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               {autoConfig && !autoConfig.crnError && restaurant.departments.length > 0 && restaurant.cashiers.length > 0 && (
                 <ActionBar
                   onNext={() => goTo(6)}
-                  nextLabel="Continue to products →"
+                  nextLabel="Continue to API key →"
                 />
               )}
             </div>
           )}
 
-          {/* ── Step 6: Products ── */}
+          {/* ── Step 6: API Key ── */}
           {step === 6 && (
-            <div className="space-y-5">
-              <p className="text-sm text-gray-600">
-                Add at least one product. Every fiscal receipt line requires a good code and ADG code assigned by SRC. Fetch the catalogue to auto-fill codes.
-              </p>
-
-              {/* SRC product catalogue */}
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-gray-700">SRC product catalogue</p>
-                    <p className="text-xs text-gray-400 mt-0.5">Fetch available product codes from the tax authority</p>
-                  </div>
-                  <button
-                    onClick={doFetchGoodList}
-                    disabled={goodListLoading || !restaurant.crn}
-                    className="px-3.5 py-2 bg-white border border-gray-200 text-gray-700 rounded-lg text-xs font-semibold hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors shadow-sm"
-                  >
-                    {goodListLoading ? (
-                      <span className="flex items-center gap-1.5"><Spinner size="xs" /> Fetching…</span>
-                    ) : "Fetch codes"}
-                  </button>
-                </div>
-
-                {goodListError && (
-                  <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">{goodListError}</p>
-                )}
-
-                {goodList.length > 0 && (
-                  <div>
-                    <p className="text-xs text-gray-500 mb-1.5">{goodList.length} items — select one to auto-fill the form:</p>
-                    <select
-                      size={Math.min(goodList.length, 5)}
-                      onChange={(e) => { const g = goodList[Number(e.target.value)]; if (g) selectGoodCode(g); }}
-                      className="w-full text-xs border border-gray-200 rounded-lg p-2 font-mono bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      defaultValue=""
-                    >
-                      <option value="" disabled>— select a product —</option>
-                      {goodList.map((g, i) => (
-                        <option key={i} value={i}>{g.goodCode} — {g.goodName} ({g.price} AMD)</option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-              </div>
-
-              {restaurant.products.length > 0 && (
-                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
-                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  <span>{restaurant.products.length} product{restaurant.products.length !== 1 ? "s" : ""} already added.</span>
-                </div>
-              )}
-
-              {/* Product form */}
-              <div className="grid grid-cols-2 gap-4">
-                <div className="col-span-2">
-                  <FormField label="Product name" hint="Max 50 characters">
-                    <input
-                      value={prodName}
-                      onChange={(e) => setProdName(e.target.value)}
-                      maxLength={50}
-                      placeholder="e.g. Margherita Pizza"
-                      className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                    />
-                  </FormField>
-                </div>
-                <FormField label="Good code" required>
-                  <input
-                    value={prodGoodCode}
-                    onChange={(e) => setProdGoodCode(e.target.value)}
-                    placeholder="e.g. 2106-90"
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  />
-                </FormField>
-                <FormField label="ADG code" required>
-                  <input
-                    value={prodAdgCode}
-                    onChange={(e) => setProdAdgCode(e.target.value)}
-                    placeholder="e.g. 2106"
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  />
-                </FormField>
-                <FormField label="Unit of measure">
-                  <input
-                    value={prodUnit}
-                    onChange={(e) => setProdUnit(e.target.value)}
-                    placeholder="piece"
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  />
-                </FormField>
-                <FormField label="Price (AMD)" required>
-                  <input
-                    value={prodPrice}
-                    onChange={(e) => setProdPrice(e.target.value)}
-                    placeholder="3500"
-                    type="number"
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                  />
-                </FormField>
-                {restaurant.departments.length > 0 && (
-                  <div className="col-span-2">
-                    <FormField label="Department">
-                      <select
-                        value={prodDeptId}
-                        onChange={(e) => setProdDeptId(e.target.value)}
-                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                      >
-                        {restaurant.departments.map((d) => (
-                          <option key={d.id} value={d.id}>{d.name} (ID: {d.taxDepartmentId})</option>
-                        ))}
-                      </select>
-                    </FormField>
-                  </div>
-                )}
-              </div>
-
-              <ResultBanner result={result} />
-
-              <div className="flex flex-wrap gap-2 items-center">
-                <GhostButton onClick={() => goTo(5)} label="← Back" />
-                <PrimaryButton onClick={doAddProduct} loading={loading} label="Add product" />
-                {restaurant.products.length > 0 && (
-                  <button onClick={() => goTo(7)} className="text-sm text-blue-600 hover:underline ml-1">
-                    Skip — already have products
-                  </button>
-                )}
-              </div>
-
-              {result?.ok && (
-                <ActionBar onNext={() => goTo(7)} nextLabel="Continue to API key →" />
-              )}
-            </div>
-          )}
-
-          {/* ── Step 7: API Key ── */}
-          {step === 7 && (
             <div className="space-y-5">
               <p className="text-sm text-gray-600">
                 Generate an API key to authenticate your point-of-sale system. Copy it immediately — it is only shown once.
@@ -1236,11 +1029,11 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                     </svg>
                     <span>Send this key as the <code className="font-mono bg-amber-100 px-1 rounded">X-Api-Key</code> header in all POS API requests. It will not be shown again.</span>
                   </div>
-                  <ActionBar onNext={() => { advanceDbStep(11); goTo(8); }} nextLabel="Continue to completion →" />
+                  <ActionBar onNext={() => { advanceDbStep(11); goTo(7); }} nextLabel="Continue to completion →" />
                 </div>
               ) : (
                 <ActionBar
-                  onBack={() => goTo(6)}
+                  onBack={() => goTo(5)}
                   onPrimary={doGenerateApiKey}
                   primaryLabel="Generate API key"
                   primaryLoading={loading}
@@ -1248,15 +1041,15 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               )}
 
               {(apiKey || restaurant.hasApiKey) && !apiKey && (
-                <button onClick={() => { advanceDbStep(11); goTo(8); }} className="text-sm text-blue-600 hover:underline">
+                <button onClick={() => { advanceDbStep(11); goTo(7); }} className="text-sm text-blue-600 hover:underline">
                   Skip — already have a key →
                 </button>
               )}
             </div>
           )}
 
-          {/* ── Step 8: Complete ── */}
-          {step === 8 && (
+          {/* ── Step 7: Complete ── */}
+          {step === 7 && (
             <div className="space-y-6">
               {/* Completion state */}
               {isReallyComplete ? (
@@ -1288,10 +1081,9 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Readiness checklist</p>
                 </div>
                 {[
-                  { label: "Certificate uploaded",     ok: restaurant.hasCert,                    fix: 4 },
+                  { label: "Certificate uploaded",        ok: restaurant.hasCert,                    fix: 4 },
                   { label: "Auto-configuration complete", ok: !!autoConfig && !autoConfig.crnError, fix: 5 },
-                  { label: "Products added",            ok: restaurant.products.length > 0,        fix: 6 },
-                  { label: "API key generated",         ok: restaurant.hasApiKey,                  fix: 7 },
+                  { label: "API key generated",           ok: restaurant.hasApiKey,                  fix: 6 },
                 ].map((item) => (
                   <div
                     key={item.label}

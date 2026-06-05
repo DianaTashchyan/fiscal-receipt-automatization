@@ -18,7 +18,6 @@ export default async function OnboardingPage({ params }: Props) {
       srcOnboardingStep: true,
       cashiers:    { where: { isActive: true }, select: { id: true, name: true, taxCashierId: true, isDefault: true } },
       departments: { where: { isActive: true }, select: { id: true, name: true, taxDepartmentId: true, taxRegime: true } },
-      products:    { where: { isActive: true }, take: 5, select: { id: true, name: true } },
       apiKeys:     { where: { isActive: true }, select: { id: true, label: true } },
     },
   });
@@ -40,7 +39,6 @@ export default async function OnboardingPage({ params }: Props) {
     onboardingStep: restaurant.srcOnboardingStep ?? 0,
     cashiers: restaurant.cashiers,
     departments: restaurant.departments,
-    products: restaurant.products,
     hasApiKey: restaurant.apiKeys.length > 0,
     isMockMode,
   };
