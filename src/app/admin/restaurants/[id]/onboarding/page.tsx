@@ -5,14 +5,16 @@ import OnboardingWizard from "./wizard";
 
 export const dynamic = "force-dynamic";
 
-// Resolve the first IPv4 address for the hostname in websiteUrl.
-// Returns the IP string on success, null on failure (DNS error / no A records).
+// Resolve all IPv4 A-records for the hostname in websiteUrl.
+// Returns comma-separated IPs (e.g. "159.89.213.138" or "1.2.3.4, 5.6.7.8").
+// Returns null on DNS failure or if no A records exist.
 async function resolveWebsiteIp(websiteUrl: string): Promise<string | null> {
   try {
     const hostname = new URL(websiteUrl).hostname;
     if (!hostname) return null;
     const addresses = await dns.resolve4(hostname);
-    return addresses[0] ?? null;
+    if (!addresses || addresses.length === 0) return null;
+    return addresses.join(", ");
   } catch {
     return null;
   }

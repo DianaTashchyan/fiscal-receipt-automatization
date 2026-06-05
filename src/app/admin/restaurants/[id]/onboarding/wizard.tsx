@@ -1280,6 +1280,19 @@ function SrcCabinetPanel({
 }) {
   const [copied, setCopied] = useState<string | null>(null);
 
+  // Parse all resolved IPs (comma-separated from DB); first one is the primary SRC value.
+  const ips = outboundIp ? outboundIp.split(",").map((s) => s.trim()).filter(Boolean) : [];
+  const primaryIp = ips[0] ?? null;
+  const multipleIps = ips.length > 1;
+
+  const hostname = (() => { try { return websiteUrl ? new URL(websiteUrl).hostname : null; } catch { return null; } })();
+
+  const ipHint = primaryIp && hostname
+    ? multipleIps
+      ? `${ips.length} A records for ${hostname} — enter the primary one in SRC field 5.2`
+      : `resolved from ${hostname}`
+    : null;
+
   async function copy(value: string, key: string) {
     await navigator.clipboard.writeText(value);
     setCopied(key);
@@ -1288,7 +1301,7 @@ function SrcCabinetPanel({
 
   async function copyAll() {
     const parts = [
-      outboundIp    ? `Field 5.2 IP address:    ${outboundIp}` : null,
+      primaryIp     ? `Field 5.2 IP address:    ${primaryIp}` : null,
       websiteUrl    ? `Field 5.3 Website URL:   ${websiteUrl}` : null,
       platformName  ? `Field 5.4 Platform name: ${platformName}` : null,
     ].filter(Boolean);
@@ -1298,12 +1311,8 @@ function SrcCabinetPanel({
     setTimeout(() => setCopied((c) => (c === "all" ? null : c)), 2000);
   }
 
-  const ipHint = outboundIp && websiteUrl
-    ? (() => { try { return `resolved from ${new URL(websiteUrl).hostname}`; } catch { return null; } })()
-    : null;
-
-  const rows: { field: string; label: string; value: string | null; hint: string | null; key: string }[] = [
-    { field: "5.2", label: "IP address",    value: outboundIp,   hint: ipHint,  key: "ip" },
+  const rows: { field: string; label: string; value: string | null; allValues?: string[]; hint: string | null; key: string }[] = [
+    { field: "5.2", label: "IP address",    value: primaryIp,   allValues: multipleIps ? ips : undefined, hint: ipHint,  key: "ip" },
     { field: "5.3", label: "Website URL",   value: websiteUrl,   hint: null,    key: "url" },
     { field: "5.4", label: "Platform name", value: platformName, hint: null,    key: "platform" },
   ];
@@ -1330,15 +1339,24 @@ function SrcCabinetPanel({
       </div>
 
       <div className="divide-y divide-gray-100">
-        {rows.map(({ field, label, value, hint, key }) => (
-          <div key={key} className="flex items-center gap-3 px-4 py-3">
-            <span className="shrink-0 w-10 text-xs font-mono font-bold text-gray-400">{field}</span>
-            <span className="w-28 shrink-0 text-xs font-medium text-gray-500">{label}</span>
+        {rows.map(({ field, label, value, allValues, hint, key }) => (
+          <div key={key} className="flex items-start gap-3 px-4 py-3">
+            <span className="shrink-0 w-10 text-xs font-mono font-bold text-gray-400 mt-0.5">{field}</span>
+            <span className="w-28 shrink-0 text-xs font-medium text-gray-500 mt-0.5">{label}</span>
             {value ? (
               <>
                 <div className="flex-1 min-w-0">
-                  <code className="block text-xs font-mono text-gray-800 truncate">{value}</code>
-                  {hint && <span className="text-[10px] text-gray-400">{hint}</span>}
+                  {allValues ? (
+                    allValues.map((ip, i) => (
+                      <div key={ip} className="flex items-center gap-1.5">
+                        <code className="text-xs font-mono text-gray-800">{ip}</code>
+                        {i === 0 && <span className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide">primary</span>}
+                      </div>
+                    ))
+                  ) : (
+                    <code className="block text-xs font-mono text-gray-800 truncate">{value}</code>
+                  )}
+                  {hint && <span className="text-[10px] text-gray-400 mt-0.5 block">{hint}</span>}
                 </div>
                 <button
                   onClick={() => copy(value, key)}
@@ -1352,7 +1370,7 @@ function SrcCabinetPanel({
                 </button>
               </>
             ) : (
-              <span className="flex-1 text-xs text-gray-400 italic">Not set</span>
+              <span className="flex-1 text-xs text-gray-400 italic mt-0.5">Not set</span>
             )}
           </div>
         ))}
