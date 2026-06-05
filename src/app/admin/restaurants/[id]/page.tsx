@@ -13,9 +13,8 @@ function wizardStep(db: number): number {
   if (db === 3) return 3;
   if (db === 4) return 4;
   if (db <= 9) return 5;
-  if (db <= 10) return 6;
-  if (db <= 11) return 7;
-  return 8;
+  if (db <= 11) return 6;
+  return 7;
 }
 
 export default async function RestaurantDetailPage({ params }: Props) {
@@ -54,7 +53,6 @@ export default async function RestaurantDetailPage({ params }: Props) {
     { label: "SRC Register",  done: step >= 3 },
     { label: "Certificate",   done: step >= 5 },
     { label: "Configure",     done: step >= 9 },
-    { label: "Products",      done: step >= 10 },
     { label: "API Key",       done: step >= 11 },
     { label: "Done",          done: step >= 12 },
   ];
@@ -85,7 +83,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
                     border: `1px solid ${complete ? "rgba(16,185,129,0.3)" : "rgba(99,102,241,0.3)"}`,
                   }}
                 >
-                  {complete ? "✓ Live" : `Step ${ws}/8`}
+                  {complete ? "✓ Live" : `Step ${ws}/7`}
                 </span>
                 {!restaurant.isActive && (
                   <span className="px-2.5 py-1 bg-white/10 text-slate-400 rounded-full text-xs font-semibold border border-white/10">Inactive</span>

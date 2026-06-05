@@ -60,7 +60,7 @@ export default async function RestaurantsPage() {
             const step     = r.srcOnboardingStep ?? 0;
             const complete = step >= 12;
             const hasCert  = !!(r.srcCertData || r.srcCertPath);
-            const wizStep  = step <= 0 ? 1 : step <= 2 ? step : step === 3 ? 3 : step === 4 ? 4 : step <= 9 ? 5 : step === 10 ? 6 : step === 11 ? 7 : 8;
+            const wizStep  = step <= 0 ? 1 : step <= 2 ? step : step === 3 ? 3 : step === 4 ? 4 : step <= 9 ? 5 : step <= 11 ? 6 : 7;
 
             return (
               <div
@@ -110,7 +110,7 @@ export default async function RestaurantsPage() {
                           : step > 0 ? "bg-indigo-50 text-indigo-700 border-indigo-200"
                           : "bg-gray-50 text-gray-500 border-gray-200"
                         }`}>
-                          {complete ? "✓ Live" : step > 0 ? `Step ${wizStep}/8` : "New"}
+                          {complete ? "✓ Live" : step > 0 ? `Step ${wizStep}/7` : "New"}
                         </span>
                       </div>
                       <p className="text-xs text-gray-400">
