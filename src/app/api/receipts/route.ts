@@ -38,6 +38,20 @@ export async function GET(req: NextRequest) {
   });
 }
 
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /api/receipts
+//
+// VCR-style API-only receipt creation. Authenticated via X-Api-Key header.
+// The caller provides full item data inline — no Product table lookup is
+// performed. After SRC onboarding is complete, a restaurant can accept fiscal
+// receipts immediately without registering products in the database.
+//
+// Required fields per item: name, goodCode, adgCode, unit, quantity, unitPrice,
+// departmentTaxId, taxRegime. Optional: discountAmount (default 0).
+//
+// billAmount and totalAmount are computed server-side from the items array.
+// tipAmount is optional (default 0); totalAmount = billAmount + tipAmount.
+// ──────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
     const apiKey = req.headers.get("x-api-key");
@@ -75,14 +89,10 @@ export async function POST(req: NextRequest) {
     const {
       externalOrderId,
       tableNumber,
-      billAmount,     // items total (no tip) — sent to SRC as the payment amount
-      tipAmount = 0,  // gratuity, stored in DB but NOT fiscalized
-      totalAmount,    // billAmount + tipAmount, stored in DB
+      tipAmount = 0,
       paymentMethod,
-      // For MIXED: explicit cash/card split (both required when paymentMethod=MIXED)
       cashAmount: bodyCashAmount,
       cardAmount: bodyCardAmount,
-      // B2B: buyer TIN (8 digits), null for B2C
       partnerTin = null,
       deliveryMethod = "NONE",
       customerEmail,
@@ -90,9 +100,9 @@ export async function POST(req: NextRequest) {
       items,
     } = body;
 
-    if (!externalOrderId || billAmount === undefined || !totalAmount || !paymentMethod || !items?.length) {
+    if (!externalOrderId || !paymentMethod || !items?.length) {
       return NextResponse.json(
-        { error: "Missing required fields: externalOrderId, billAmount, totalAmount, paymentMethod, items" },
+        { error: "Missing required fields: externalOrderId, paymentMethod, items" },
         { status: 400 }
       );
     }
@@ -105,7 +115,57 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // MIXED requires explicit split — we cannot infer which portion is cash vs card
+    if (partnerTin !== null && partnerTin !== undefined) {
+      if (typeof partnerTin !== "string" || !/^\d{8}$/.test(partnerTin)) {
+        return NextResponse.json(
+          { error: "partnerTin must be a valid 8-digit TIN or null" },
+          { status: 400 }
+        );
+      }
+    }
+
+    // Validate and map inline items — no Product DB lookup
+    type MappedItem = {
+      name: string; goodCode: string; adgCode: string; unit: string;
+      departmentTaxId: string; taxRegime: string;
+      quantity: number; unitPrice: number; totalPrice: number; discountAmount: number;
+    };
+    const mappedItems: MappedItem[] = [];
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it.name || !it.goodCode || !it.adgCode || !it.unit || !it.quantity || !it.unitPrice || !it.departmentTaxId || !it.taxRegime) {
+        return NextResponse.json(
+          { error: `Item ${i + 1} is missing required fields: name, goodCode, adgCode, unit, quantity, unitPrice, departmentTaxId, taxRegime` },
+          { status: 400 }
+        );
+      }
+      const qty = Number(it.quantity);
+      const price = money(Number(it.unitPrice));
+      const discount = money(Number(it.discountAmount ?? 0));
+      if (qty <= 0) {
+        return NextResponse.json({ error: `Item ${i + 1}: quantity must be greater than zero` }, { status: 400 });
+      }
+      mappedItems.push({
+        name: String(it.name).slice(0, 50),
+        goodCode: String(it.goodCode),
+        adgCode: String(it.adgCode),
+        unit: String(it.unit).slice(0, 50),
+        departmentTaxId: String(it.departmentTaxId),
+        taxRegime: String(it.taxRegime),
+        quantity: qty,
+        unitPrice: price,
+        totalPrice: money(qty * price - discount),
+        discountAmount: discount,
+      });
+    }
+
+    // Compute bill/total from items
+    const billAmt = money(mappedItems.reduce((sum, it) => sum + it.totalPrice, 0));
+    const tipAmt = money(Number(tipAmount));
+    const totalAmt = money(billAmt + tipAmt);
+
+    // MIXED requires explicit split
     if (paymentMethod === "MIXED") {
       if (bodyCashAmount === undefined || bodyCardAmount === undefined) {
         return NextResponse.json(
@@ -118,23 +178,13 @@ export async function POST(req: NextRequest) {
         );
       }
       const splitSum = Number(bodyCashAmount) + Number(bodyCardAmount);
-      if (Math.abs(splitSum - Number(billAmount)) > 0.01) {
+      if (Math.abs(splitSum - billAmt) > 0.01) {
         return NextResponse.json(
           {
             error:
               `cashAmount (${bodyCashAmount}) + cardAmount (${bodyCardAmount}) = ${splitSum} ` +
-              `does not equal billAmount (${billAmount}).`,
+              `does not equal computed billAmount (${billAmt}).`,
           },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Validate partnerTin when present
-    if (partnerTin !== null && partnerTin !== undefined) {
-      if (typeof partnerTin !== "string" || !/^\d{8}$/.test(partnerTin)) {
-        return NextResponse.json(
-          { error: "partnerTin must be a valid 8-digit TIN or null" },
           { status: 400 }
         );
       }
@@ -163,62 +213,14 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // Resolve products before touching DB
-    const resolvedItems: Array<{
-      product: {
-        id: string;
-        name: string;
-        goodCode: string;
-        adgCode: string;
-        unit: string;
-        department: { taxRegime: string; taxDepartmentId: string };
-      };
-      externalProductId: string;
-      quantity: number;
-      unitPrice: number;
-      totalPrice: number;
-      discountAmount: number;
-    }> = [];
-
-    for (const item of items) {
-      const product = await prisma.product.findFirst({
-        where: {
-          restaurantId: restaurantApiKey.restaurantId,
-          externalProductId: item.externalProductId,
-          isActive: true,
-        },
-        include: { department: true },
-      });
-      if (!product) {
-        return NextResponse.json(
-          { error: `Product not found: ${item.externalProductId}` },
-          { status: 400 }
-        );
-      }
-      resolvedItems.push({
-        product,
-        externalProductId: item.externalProductId,
-        quantity: Number(item.quantity),
-        unitPrice: Number(item.unitPrice),
-        totalPrice: Number(item.totalPrice),
-        discountAmount: Number(item.discountAmount ?? 0),
-      });
-    }
-
-    // Compute paidCashAmount / paidCardAmount from the payment split
-    const billAmt = Number(billAmount);
     const paidCash =
-      paymentMethod === "CASH"
-        ? billAmt
-        : paymentMethod === "MIXED"
-          ? Number(bodyCashAmount)
-          : 0;
+      paymentMethod === "CASH" ? billAmt
+      : paymentMethod === "MIXED" ? Number(bodyCashAmount)
+      : 0;
     const paidCard =
-      paymentMethod === "CARD" || paymentMethod === "ONLINE"
-        ? billAmt
-        : paymentMethod === "MIXED"
-          ? Number(bodyCardAmount)
-          : 0;
+      paymentMethod === "CARD" || paymentMethod === "ONLINE" ? billAmt
+      : paymentMethod === "MIXED" ? Number(bodyCardAmount)
+      : 0;
 
     const { receipt, createdItems } = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
@@ -227,9 +229,9 @@ export async function POST(req: NextRequest) {
           cashierId: cashier.id,
           externalOrderId,
           tableNumber,
-          billAmount,
-          tipAmount,
-          totalAmount,
+          billAmount: billAmt,
+          tipAmount: tipAmt,
+          totalAmount: totalAmt,
           paidCashAmount: paidCash,
           paidCardAmount: paidCard,
           paymentMethod: paymentMethod as PaymentMethod,
@@ -241,22 +243,22 @@ export async function POST(req: NextRequest) {
       });
 
       const createdItems = await Promise.all(
-        resolvedItems.map((ri) =>
+        mappedItems.map((mi) =>
           tx.receiptItem.create({
             data: {
               receiptId: receipt.id,
-              productId: ri.product.id,
-              externalProductId: ri.externalProductId,
-              name: ri.product.name,
-              goodCode: ri.product.goodCode,
-              adgCode: ri.product.adgCode,
-              unit: ri.product.unit,
-              taxRegime: ri.product.department.taxRegime,
-              departmentTaxId: ri.product.department.taxDepartmentId,
-              quantity: ri.quantity,
-              unitPrice: ri.unitPrice,
-              totalPrice: ri.totalPrice,
-              discountAmount: ri.discountAmount,
+              productId: null,
+              externalProductId: null,
+              name: mi.name,
+              goodCode: mi.goodCode,
+              adgCode: mi.adgCode,
+              unit: mi.unit,
+              taxRegime: mi.taxRegime,
+              departmentTaxId: mi.departmentTaxId,
+              quantity: mi.quantity,
+              unitPrice: mi.unitPrice,
+              totalPrice: mi.totalPrice,
+              discountAmount: mi.discountAmount,
             },
           })
         )
@@ -268,7 +270,7 @@ export async function POST(req: NextRequest) {
           event: "RECEIPT_CREATED",
           fromStatus: null,
           toStatus: ReceiptStatus.PENDING,
-          payload: { externalOrderId, paymentMethod, billAmount, tipAmount, totalAmount, itemCount: items.length },
+          payload: { externalOrderId, paymentMethod, billAmount: billAmt, tipAmount: tipAmt, totalAmount: totalAmt, itemCount: mappedItems.length },
         },
       });
 
@@ -284,7 +286,7 @@ export async function POST(req: NextRequest) {
       const taxResult = await registerSaleInTaxApi({
         restaurant: restaurantApiKey.restaurant,
         cashierTaxId: cashier.taxCashierId,
-        billAmount: String(money(billAmt)),
+        billAmount: String(billAmt),
         paidCashAmount: paymentMethod === "MIXED" ? String(paidCash) : undefined,
         paidCardAmount: paymentMethod === "MIXED" ? String(paidCard) : undefined,
         partnerTin: partnerTin ?? null,

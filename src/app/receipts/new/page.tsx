@@ -9,15 +9,13 @@ export default async function NewReceiptPage() {
   const restaurants = await prisma.restaurant.findMany({
     where:   { isActive: true },
     include: {
-      cashiers: { where: { isActive: true } },
-      products: { where: { isActive: true } },
+      departments: { where: { isActive: true } },
     },
     orderBy: { createdAt: "desc" },
   });
 
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)" }}>
-      {/* Hero header */}
       <div style={{ background: "linear-gradient(135deg, #0d1117 0%, #1a1f2e 100%)" }}>
         <div className="max-w-3xl mx-auto px-6 py-8">
           <Link
@@ -31,7 +29,7 @@ export default async function NewReceiptPage() {
           </Link>
           <p className="text-xs font-semibold text-indigo-400 uppercase tracking-widest mb-1">Create</p>
           <h1 className="text-2xl font-bold text-white tracking-tight">New Fiscal Receipt</h1>
-          <p className="text-sm text-slate-400 mt-1">Manually create and fiscalize a receipt with the SRC immediately.</p>
+          <p className="text-sm text-slate-400 mt-1">Manually create and fiscalize a receipt through SRC.</p>
         </div>
       </div>
 

@@ -5,6 +5,16 @@ import { registerSaleInTaxApi } from "@/lib/services/tax-api.service";
 import { money } from "@/lib/src/validation";
 import { requireAuth } from "@/lib/utils/auth";
 
+// ──────────────────────────────────────────────────────────────────────────────
+// POST /api/receipts/manual
+//
+// Admin-authenticated receipt creation (Bearer token). Same VCR-style
+// inline-item model as POST /api/receipts. No Product DB lookup is performed.
+//
+// Required fields per item: name, goodCode, adgCode, unit, quantity, unitPrice,
+// departmentTaxId, taxRegime. Optional: discountAmount (default 0).
+// billAmount and totalAmount are computed from items. tipAmount defaults to 0.
+// ──────────────────────────────────────────────────────────────────────────────
 export async function POST(req: NextRequest) {
   try { await requireAuth(req); } catch (err) {
     if (err instanceof NextResponse) return err;
@@ -19,14 +29,13 @@ export async function POST(req: NextRequest) {
       externalOrderId,
       tableNumber,
       paymentMethod,
-      // For MIXED: explicit cash/card split (both required when paymentMethod=MIXED)
       cashAmount: bodyCashAmount,
       cardAmount: bodyCardAmount,
-      // B2B: buyer TIN (null for B2C)
       partnerTin = null,
       deliveryMethod = "NONE",
       customerEmail,
       customerPhone,
+      tipAmount = 0,
       items,
     } = body;
 
@@ -56,16 +65,7 @@ export async function POST(req: NextRequest) {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: {
-        id: true,
-        name: true,
-        tin: true,
-        crn: true,
-        isActive: true,
-        srcCertData: true,
-        srcCertPassword: true,
-        srcCertPath: true,
-      },
+      select: { id: true, name: true, tin: true, crn: true, isActive: true, srcCertData: true, srcCertPassword: true, srcCertPath: true },
     });
     if (!restaurant) {
       return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });
@@ -91,47 +91,46 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Receipt with this Order ID already exists" }, { status: 409 });
     }
 
-    // Resolve products and compute billAmount from product prices
-    let billAmount = 0;
-    const preparedItems: Array<{
-      product: {
-        id: string;
-        name: string;
-        goodCode: string;
-        adgCode: string;
-        unit: string;
-        externalProductId: string | null;
-        department: { taxRegime: string; taxDepartmentId: string };
-      };
-      quantity: number;
-      unitPrice: number;
-      totalPrice: number;
-    }> = [];
+    // Validate and map inline items — no Product DB lookup
+    type MappedItem = {
+      name: string; goodCode: string; adgCode: string; unit: string;
+      departmentTaxId: string; taxRegime: string;
+      quantity: number; unitPrice: number; totalPrice: number; discountAmount: number;
+    };
+    const mappedItems: MappedItem[] = [];
 
-    for (const item of items) {
-      const qty = Number(item.quantity);
-      if (!qty || qty <= 0) {
-        return NextResponse.json({ error: "Quantity must be greater than zero" }, { status: 400 });
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it.name || !it.goodCode || !it.adgCode || !it.unit || !it.quantity || !it.unitPrice || !it.departmentTaxId || !it.taxRegime) {
+        return NextResponse.json(
+          { error: `Item ${i + 1} is missing required fields: name, goodCode, adgCode, unit, quantity, unitPrice, departmentTaxId, taxRegime` },
+          { status: 400 }
+        );
       }
-
-      const product = await prisma.product.findUnique({
-        where: { id: item.productId },
-        include: { department: true },
+      const qty = Number(it.quantity);
+      const price = money(Number(it.unitPrice));
+      const discount = money(Number(it.discountAmount ?? 0));
+      if (qty <= 0) {
+        return NextResponse.json({ error: `Item ${i + 1}: quantity must be greater than zero` }, { status: 400 });
+      }
+      mappedItems.push({
+        name: String(it.name).slice(0, 50),
+        goodCode: String(it.goodCode),
+        adgCode: String(it.adgCode),
+        unit: String(it.unit).slice(0, 50),
+        departmentTaxId: String(it.departmentTaxId),
+        taxRegime: String(it.taxRegime),
+        quantity: qty,
+        unitPrice: price,
+        totalPrice: money(qty * price - discount),
+        discountAmount: discount,
       });
-      if (!product || product.restaurantId !== restaurantId || !product.isActive) {
-        return NextResponse.json({ error: `Invalid product: ${item.productId}` }, { status: 400 });
-      }
-      if (!product.price && !product.isVariablePrice) {
-        return NextResponse.json({ error: `Product has no price: ${item.productId}` }, { status: 400 });
-      }
-
-      const unitPrice = Number(product.price ?? 0);
-      const totalPrice = money(qty * unitPrice);
-      billAmount = money(billAmount + totalPrice);
-      preparedItems.push({ product, quantity: qty, unitPrice, totalPrice });
     }
 
-    // MIXED requires explicit split
+    const billAmt = money(mappedItems.reduce((sum, it) => sum + it.totalPrice, 0));
+    const tipAmt = money(Number(tipAmount));
+    const totalAmt = money(billAmt + tipAmt);
+
     if (paymentMethod === "MIXED") {
       if (bodyCashAmount === undefined || bodyCardAmount === undefined) {
         return NextResponse.json(
@@ -144,12 +143,12 @@ export async function POST(req: NextRequest) {
         );
       }
       const splitSum = Number(bodyCashAmount) + Number(bodyCardAmount);
-      if (Math.abs(splitSum - billAmount) > 0.01) {
+      if (Math.abs(splitSum - billAmt) > 0.01) {
         return NextResponse.json(
           {
             error:
               `cashAmount (${bodyCashAmount}) + cardAmount (${bodyCardAmount}) = ${splitSum} ` +
-              `does not equal computed billAmount (${billAmount}).`,
+              `does not equal computed billAmount (${billAmt}).`,
           },
           { status: 400 }
         );
@@ -157,17 +156,13 @@ export async function POST(req: NextRequest) {
     }
 
     const paidCash =
-      paymentMethod === "CASH"
-        ? billAmount
-        : paymentMethod === "MIXED"
-          ? Number(bodyCashAmount)
-          : 0;
+      paymentMethod === "CASH" ? billAmt
+      : paymentMethod === "MIXED" ? Number(bodyCashAmount)
+      : 0;
     const paidCard =
-      paymentMethod === "CARD" || paymentMethod === "ONLINE"
-        ? billAmount
-        : paymentMethod === "MIXED"
-          ? Number(bodyCardAmount)
-          : 0;
+      paymentMethod === "CARD" || paymentMethod === "ONLINE" ? billAmt
+      : paymentMethod === "MIXED" ? Number(bodyCardAmount)
+      : 0;
 
     const { receipt, createdItems } = await prisma.$transaction(async (tx) => {
       const receipt = await tx.receipt.create({
@@ -176,9 +171,9 @@ export async function POST(req: NextRequest) {
           cashierId: cashier.id,
           externalOrderId,
           tableNumber,
-          billAmount,
-          tipAmount: 0,
-          totalAmount: billAmount,
+          billAmount: billAmt,
+          tipAmount: tipAmt,
+          totalAmount: totalAmt,
           paidCashAmount: paidCash,
           paidCardAmount: paidCard,
           paymentMethod: paymentMethod as PaymentMethod,
@@ -190,22 +185,22 @@ export async function POST(req: NextRequest) {
       });
 
       const createdItems = await Promise.all(
-        preparedItems.map((pi) =>
+        mappedItems.map((mi) =>
           tx.receiptItem.create({
             data: {
               receiptId: receipt.id,
-              productId: pi.product.id,
-              externalProductId: pi.product.externalProductId,
-              name: pi.product.name,
-              goodCode: pi.product.goodCode,
-              adgCode: pi.product.adgCode,
-              unit: pi.product.unit,
-              taxRegime: pi.product.department.taxRegime,
-              departmentTaxId: pi.product.department.taxDepartmentId,
-              quantity: pi.quantity,
-              unitPrice: pi.unitPrice,
-              totalPrice: pi.totalPrice,
-              discountAmount: 0,
+              productId: null,
+              externalProductId: null,
+              name: mi.name,
+              goodCode: mi.goodCode,
+              adgCode: mi.adgCode,
+              unit: mi.unit,
+              taxRegime: mi.taxRegime,
+              departmentTaxId: mi.departmentTaxId,
+              quantity: mi.quantity,
+              unitPrice: mi.unitPrice,
+              totalPrice: mi.totalPrice,
+              discountAmount: mi.discountAmount,
             },
           })
         )
@@ -217,7 +212,7 @@ export async function POST(req: NextRequest) {
           event: "MANUAL_RECEIPT_CREATED",
           fromStatus: null,
           toStatus: ReceiptStatus.PENDING,
-          payload: { externalOrderId, paymentMethod, billAmount, itemCount: items.length },
+          payload: { externalOrderId, paymentMethod, billAmount: billAmt, itemCount: mappedItems.length },
         },
       });
 
@@ -233,7 +228,7 @@ export async function POST(req: NextRequest) {
       const taxResult = await registerSaleInTaxApi({
         restaurant,
         cashierTaxId: cashier.taxCashierId,
-        billAmount: String(billAmount),
+        billAmount: String(billAmt),
         paidCashAmount: paymentMethod === "MIXED" ? String(paidCash) : undefined,
         paidCardAmount: paymentMethod === "MIXED" ? String(paidCard) : undefined,
         partnerTin: partnerTin ?? null,

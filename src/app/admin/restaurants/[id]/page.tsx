@@ -25,7 +25,6 @@ export default async function RestaurantDetailPage({ params }: Props) {
     include: {
       cashiers:    { where: { isActive: true }, orderBy: { createdAt: "asc" } },
       departments: { where: { isActive: true }, orderBy: { createdAt: "asc" } },
-      products:    { where: { isActive: true }, orderBy: { createdAt: "asc" }, take: 20 },
       apiKeys:     { orderBy: { createdAt: "desc" } },
       _count:      { select: { receipts: true } },
     },
@@ -40,11 +39,10 @@ export default async function RestaurantDetailPage({ params }: Props) {
   const activeKeys = restaurant.apiKeys.filter((k) => k.isActive);
 
   const health = [
-    { label: "SRC Certificate",  ok: hasCert,                             detail: hasCert ? "Uploaded & stored" : "Not uploaded yet",          href: "onboarding", icon: "🔐" },
-    { label: "Cashiers",         ok: restaurant.cashiers.length > 0,      detail: `${restaurant.cashiers.length} cashier${restaurant.cashiers.length !== 1 ? "s" : ""} configured`, href: "cashiers", icon: "👤" },
-    { label: "Tax Departments",  ok: restaurant.departments.length > 0,   detail: `${restaurant.departments.length} department${restaurant.departments.length !== 1 ? "s" : ""} configured`, href: "departments", icon: "🏛️" },
-    { label: "Products",         ok: restaurant.products.length > 0,      detail: `${restaurant.products.length} active product${restaurant.products.length !== 1 ? "s" : ""}`, href: "products", icon: "📦" },
-    { label: "API Key",          ok: activeKeys.length > 0,               detail: `${activeKeys.length} active key${activeKeys.length !== 1 ? "s" : ""}`, href: "api-keys", icon: "🔑" },
+    { label: "SRC Certificate",  ok: hasCert,                             detail: hasCert ? "Uploaded & stored" : "Not uploaded yet",          href: "onboarding" },
+    { label: "Cashiers",         ok: restaurant.cashiers.length > 0,      detail: `${restaurant.cashiers.length} cashier${restaurant.cashiers.length !== 1 ? "s" : ""} configured`, href: "cashiers" },
+    { label: "Tax Departments",  ok: restaurant.departments.length > 0,   detail: `${restaurant.departments.length} department${restaurant.departments.length !== 1 ? "s" : ""} configured`, href: "departments" },
+    { label: "API Key",          ok: activeKeys.length > 0,               detail: `${activeKeys.length} active key${activeKeys.length !== 1 ? "s" : ""}`, href: "api-keys" },
   ];
 
   const onboardingSteps = [
@@ -126,12 +124,11 @@ export default async function RestaurantDetailPage({ params }: Props) {
           </div>
 
           {/* Stats strip */}
-          <div className="grid grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-3 gap-3 mt-6">
             {[
-              { label: "Receipts",   value: restaurant._count.receipts, href: "/receipts" },
-              { label: "Products",   value: restaurant.products.length,  href: `products` },
-              { label: "Cashiers",   value: restaurant.cashiers.length,  href: `cashiers` },
-              { label: "API Keys",   value: activeKeys.length,           href: `api-keys` },
+              { label: "Receipts",      value: restaurant._count.receipts,   href: "/receipts" },
+              { label: "Cashiers",      value: restaurant.cashiers.length,   href: `cashiers` },
+              { label: "API Keys",      value: activeKeys.length,            href: `api-keys` },
             ].map((s) => (
               <Link
                 key={s.label}
