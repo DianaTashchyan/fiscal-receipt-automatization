@@ -732,7 +732,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               </div>
 
               <Notice variant="info">
-                After SRC approves your application, the backend will automatically extract all required configuration from the certificate. You will not need to enter CRN, department, or cashier data manually.
+                Once SRC approves your u6 application, upload the signed .crt in step 4. The CRN will be extracted automatically from the certificate filename. You will then configure your department (tax regime) and cashier ID in step 5 using values from your SRC cabinet.
               </Notice>
 
               <ActionBar

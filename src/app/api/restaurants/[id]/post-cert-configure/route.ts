@@ -265,7 +265,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         try {
           const seq = await nextSeq(crn);
           const taxRegimeNum = Number(status.department.taxRegime);
-          await client.configureDepartments(crn, seq, [{ dep: 1, taxRegime: taxRegimeNum }]);
+          await client.configureDepartments(crn, seq, [{ dep: Number(status.department.taxDepartmentId), taxRegime: taxRegimeNum }]);
         } catch {
           // Non-fatal — department config may already be registered in SRC
         }
