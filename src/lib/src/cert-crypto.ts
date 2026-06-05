@@ -7,7 +7,7 @@
 // needs the password to use the cert. Encrypting at rest with a server-side key
 // means both the DB dump AND the server env are required to extract usable creds.
 //
-// Key derivation: SHA-256(CERT_ENCRYPTION_KEY || JWT_SECRET fallback).
+// Key derivation: SHA-256(CERT_ENCRYPTION_KEY).
 // IMPORTANT: if CERT_ENCRYPTION_KEY changes, all stored passwords must be
 // re-encrypted. Store the key securely and never rotate it silently.
 // ============================================================
@@ -17,11 +17,23 @@ import crypto from "crypto";
 const ALGORITHM = "aes-256-gcm";
 
 function getEncryptionKey(): Buffer {
-  const raw =
-    process.env.CERT_ENCRYPTION_KEY ??
-    process.env.JWT_SECRET ??
-    "dev-only-fallback-change-in-production";
-  return crypto.createHash("sha256").update(raw).digest();
+  const key = process.env.CERT_ENCRYPTION_KEY;
+
+  if (!key) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error(
+        "CERT_ENCRYPTION_KEY is not set. This variable is required in production to encrypt " +
+        "certificate passwords and private keys stored in the database. " +
+        "Generate one with: openssl rand -hex 32"
+      );
+    }
+    // Development/test only: fall back so local runs without the key still work.
+    // Never reached in production (throws above).
+    const fallback = process.env.JWT_SECRET ?? "dev-only-fallback-change-in-production";
+    return crypto.createHash("sha256").update(fallback).digest();
+  }
+
+  return crypto.createHash("sha256").update(key).digest();
 }
 
 /**

@@ -186,7 +186,7 @@ export async function GET(
 
   y -= qrSize + 14;
 
-  center("Scan QR code to verify receipt", 7.5);
+  center("Fiscal receipt data issued by SRC", 7.5);
 
   const qrLines = qrText.match(/.{1,42}/g) ?? [];
   for (const qrLine of qrLines.slice(0, 5)) {

@@ -52,7 +52,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       subject: `CN=${restaurant.tin} Tin, OU=${restaurant.tin} Tin, O=${restaurant.tin} Tin, L=Yerevan, ST=Yerevan, C=AM`,
       message:
         "CSR generated. Download it and upload to the SRC u6 cabinet. " +
-        "After SRC approves and you receive the .crt, convert to .p12 and upload via /src-config.",
+        "After SRC approves and you receive the signed .crt, upload it via POST /api/restaurants/:id/upload-crt — " +
+        "the server combines it with this private key into a PKCS#12 bundle automatically.",
     });
   } catch (err) {
     if (err instanceof NextResponse) return err;

@@ -51,6 +51,18 @@ export function runSrcStartupChecks(): StartupCheckReport {
 
   checks.push(pass("mode", "TAX_API_MODE=src_real — real fiscalization is enabled"));
 
+  // CERT_ENCRYPTION_KEY — required to decrypt stored cert passwords and private keys
+  if (!process.env.CERT_ENCRYPTION_KEY) {
+    checks.push(fail(
+      "CERT_ENCRYPTION_KEY",
+      "CERT_ENCRYPTION_KEY is not set. This key encrypts certificate passwords and RSA " +
+        "private keys at rest in the database. Without it, certificate upload and all mTLS " +
+        "operations will fail. Generate with: openssl rand -hex 32"
+    ));
+  } else {
+    checks.push(pass("CERT_ENCRYPTION_KEY", "Set"));
+  }
+
   // TIN (from env; individual restaurants may use their own tin field)
   if (!env.tin) {
     checks.push(warn(
