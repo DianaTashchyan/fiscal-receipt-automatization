@@ -75,7 +75,7 @@ export default function DeleteRestaurantButton({ id, name }: { id: string; name:
       onClick={() => setConfirming(true)}
       className="px-4 py-2 border border-red-300 text-red-600 rounded-lg text-sm font-medium hover:bg-red-50 transition-colors"
     >
-      Delete restaurant
+      Delete business
     </button>
   );
 }

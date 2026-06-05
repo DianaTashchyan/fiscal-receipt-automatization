@@ -67,7 +67,7 @@ export default async function RestaurantDetailPage({ params }: Props) {
             <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
-            All Restaurants
+            All Businesses
           </Link>
 
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">

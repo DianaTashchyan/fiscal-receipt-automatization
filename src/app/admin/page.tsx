@@ -29,7 +29,7 @@ export default async function AdminDashboard() {
 
   const stats = [
     {
-      label: "Restaurants",
+      label: "Businesses",
       value: restCount,
       sub: `${liveRestaurants} live`,
       href: "/admin/restaurants",
@@ -96,7 +96,7 @@ export default async function AdminDashboard() {
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
             </svg>
-            Onboard Restaurant
+            Onboard Business
           </Link>
         </div>
       </div>
@@ -137,14 +137,14 @@ export default async function AdminDashboard() {
             {[
               {
                 href: "/admin/restaurants/new",
-                label: "Onboard New Restaurant",
+                label: "Onboard New Business",
                 sub: "Register a new TIN and start SRC setup",
                 gradient: "linear-gradient(135deg, #6366f1, #8b5cf6)",
                 textColor: "text-white",
               },
               {
                 href: "/admin/restaurants",
-                label: "View All Restaurants",
+                label: "View All Businesses",
                 sub: "Manage onboarding and configuration",
                 gradient: "linear-gradient(135deg, #f8fafc, #f1f5f9)",
                 textColor: "text-gray-800",

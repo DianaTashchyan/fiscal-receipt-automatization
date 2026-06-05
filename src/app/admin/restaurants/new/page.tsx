@@ -89,7 +89,7 @@ export default function NewRestaurantPage() {
         body: JSON.stringify({ name: name.trim(), tin: tin.trim(), address: address.trim() }),
       });
       const data = await res.json();
-      if (!res.ok) { setSubmitError(data.error ?? "Failed to create restaurant"); return; }
+      if (!res.ok) { setSubmitError(data.error ?? "Failed to create business"); return; }
       router.push(`/admin/restaurants/${data.id}/onboarding`);
     } catch {
       setSubmitError("Network error");
@@ -101,8 +101,8 @@ export default function NewRestaurantPage() {
   return (
     <div className="max-w-lg">
       <div className="mb-6">
-        <Link href="/admin/restaurants" className="text-sm text-gray-500 hover:text-gray-700">← Restaurants</Link>
-        <h1 className="text-2xl font-bold text-gray-900 mt-2">New Restaurant</h1>
+        <Link href="/admin/restaurants" className="text-sm text-gray-500 hover:text-gray-700">← Businesses</Link>
+        <h1 className="text-2xl font-bold text-gray-900 mt-2">New Business</h1>
         <p className="text-gray-500 text-sm mt-1">
           Enter the company TIN to look up registration data automatically.
         </p>

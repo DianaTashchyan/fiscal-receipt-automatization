@@ -601,18 +601,28 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
               </div>
 
               <div className="space-y-4">
-                <FormField label="Company name">
+                <FormField label="Company name" hint={lookupMeta && !lookupMeta.notFound ? "From registry — read-only" : undefined}>
                   <input
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    readOnly={!!(lookupMeta && !lookupMeta.notFound)}
+                    className={`w-full border rounded-lg px-3.5 py-2.5 text-sm transition-colors ${
+                      lookupMeta && !lookupMeta.notFound
+                        ? "border-gray-200 bg-gray-100 text-gray-600 cursor-default select-all"
+                        : "border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    }`}
                   />
                 </FormField>
-                <FormField label="Legal address">
+                <FormField label="Legal address" hint={lookupMeta && !lookupMeta.notFound ? "From registry — read-only" : undefined}>
                   <input
                     value={companyAddress}
                     onChange={(e) => setCompanyAddress(e.target.value)}
-                    className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                    readOnly={!!(lookupMeta && !lookupMeta.notFound)}
+                    className={`w-full border rounded-lg px-3.5 py-2.5 text-sm transition-colors ${
+                      lookupMeta && !lookupMeta.notFound
+                        ? "border-gray-200 bg-gray-100 text-gray-600 cursor-default select-all"
+                        : "border-gray-200 bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                    }`}
                   />
                 </FormField>
                 <FormField label="Platform name" hint="SRC cabinet field 5.4">
