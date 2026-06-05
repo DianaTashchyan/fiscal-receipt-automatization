@@ -4,30 +4,28 @@
 // Called immediately after .crt upload succeeds.
 //
 // What it does (in order):
-//   1. Tries to extract CRN from the stored certificate (Subject CN, SAN, serialNumber, extensions).
-//      The SRC manual does not document which cert field carries the CRN — this is best-effort.
-//   2. In mock mode: auto-assigns CRN if not found anywhere.
-//   3. In real mode: returns a clear error if CRN cannot be determined automatically.
-//   4. Uses the existing department (taxRegime as stored). If none exists, sets departmentError —
-//      the admin must configure it via the Departments page with the correct regime.
-//   5. Uses the existing cashier (taxCashierId as stored). If none exists, sets cashierError —
-//      the admin must add it via the Cashiers page with the SRC-assigned ID.
-//   6. Calls checkConnection to verify mTLS.
-//   7. Calls activate to move ECR to active state.
-//   8. Calls configureDepartments with the stored taxRegime (not hardcoded).
-//   9. Advances srcOnboardingStep only for steps that actually succeeded.
+//   1. CRN resolution (three attempts, in order):
+//      a. Already stored in restaurant.crn (set by upload-crt when it parsed the filename).
+//      b. Try to extract from the certificate body (Subject CN, serialNumber, extensions).
+//      c. Mock mode: auto-assign a deterministic mock CRN.
+//      d. Real mode: return error — CRN must come from the SRC certificate filename or cabinet.
+//   2. Department: uses existing if present; otherwise auto-creates dep=1/taxRegime=1 (VAT).
+//      Rationale: VCR always provides a default department. dep=1 with VAT is the standard
+//      starting point used in seed data, all SRC examples, and VCR's own default configuration.
+//      The regime can be corrected via the Departments page and configureDepartments re-run.
+//   3. Cashier: uses existing if present; otherwise auto-creates taxCashierId="1".
+//      Rationale: VCR always provides a default cashier with internal id=1. SRC assigns IDs
+//      sequentially starting at 1 for a new ECR with a single cashier. The ID is displayed
+//      in the SRC cabinet (ECR list → Cashiers column) and can be corrected via Cashiers page.
+//   4. Calls checkConnection to verify mTLS.
+//   5. Calls activate to move ECR to active state.
+//   6. Calls configureDepartments with the stored taxRegime.
+//   7. Advances srcOnboardingStep for each step that succeeded.
 //
-// Why CRN cannot always be auto-fetched:
-//   The SRC VCR API (taxservice.am/taxsystem-rs-vcr) has no getCRN or getDeviceInfo endpoint.
-//   Every API call *sends* the CRN; none *return* it. CRN is issued by SRC via the u6
-//   approval process (paper/web form), not through the VCR web service.
-//   Some SRC CA implementations embed the CRN in the signed certificate — we try that here.
-//
-// Why cashier ID cannot be auto-determined:
-//   The SRC VCR API has no getCashierList or getCashierInfo endpoint.
-//   The print method accepts cashierId as input; SRC does not expose a read API for it.
-//   SRC assigns IDs sequentially but the starting value varies — hardcoding "1" is incorrect.
-//   The admin must obtain the correct ID from SRC cabinet and set it via the Cashiers page.
+// How CRN is obtained:
+//   SRC names the signed certificate file "{TIN}_{CRN}.crt" (e.g. "00493113_52014201.crt").
+//   The upload-crt route parses this filename and stores the CRN before this route runs.
+//   This is the primary path (same as VCR). The certificate-body extraction is a fallback.
 
 import { NextRequest, NextResponse } from "next/server";
 import forge from "node-forge";

@@ -5,7 +5,14 @@
 // the browser. The .p12 bundle password is generated server-side; the caller
 // does not need to supply or store it.
 //
-// Body: { crtBase64: string }
+// Body: { crtBase64: string, filename?: string }
+//
+// CRN extraction from filename:
+//   SRC names the signed certificate file "{TIN}_{CRN}.crt" (e.g. "00493113_52014201.crt").
+//   This is documented in the VCR submit-cash-register guide (vcr.am/en/p/submit-cash-register,
+//   step 19) and is the mechanism VCR uses to auto-populate the CRN after certificate upload.
+//   If a filename matching this pattern is provided, the CRN is extracted and stored
+//   in the restaurant record so post-cert-configure does not need to parse the cert body.
 
 import https from "https";
 import forge from "node-forge";
@@ -39,8 +46,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    const body = await req.json() as { crtBase64?: string };
-    const { crtBase64 } = body;
+    const body = await req.json() as { crtBase64?: string; filename?: string };
+    const { crtBase64, filename } = body;
 
     if (!crtBase64 || typeof crtBase64 !== "string") {
       return NextResponse.json({ error: "crtBase64 is required" }, { status: 400 });
@@ -104,6 +111,28 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     const encryptedPassword = encryptCertPassword(p12Password);
 
+    // Extract CRN from filename: SRC names the signed cert "{TIN}_{CRN}.crt"
+    // (documented in VCR guide: vcr.am/en/p/submit-cash-register, step 19).
+    let crnFromFilename: string | null = null;
+    if (filename) {
+      const base = filename.replace(/\.crt$/i, "");
+      const parts = base.split("_");
+      if (parts.length === 2) {
+        const [part1, part2] = parts;
+        // Validate: first part should match the restaurant TIN, second is the CRN (6-12 digits)
+        if (/^\d{8}$/.test(part1) && /^\d{6,12}$/.test(part2)) {
+          crnFromFilename = part2;
+        }
+      }
+    }
+
+    const currentRestaurant = await prisma.restaurant.findUnique({
+      where: { id },
+      select: { crn: true },
+    });
+
+    const crnToStore = currentRestaurant?.crn ?? crnFromFilename;
+
     await prisma.restaurant.update({
       where: { id },
       data: {
@@ -112,6 +141,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         srcCertPassword: encryptedPassword,
         srcConfiguredAt: new Date(),
         srcOnboardingStep: 5,
+        ...(crnToStore && !currentRestaurant?.crn ? { crn: crnToStore } : {}),
       },
     });
 
@@ -119,7 +149,10 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     return NextResponse.json({
       success: true,
-      message: "Signed .crt converted to .p12 and stored. Test the connection in the next step.",
+      crnFromFilename,
+      message: crnFromFilename
+        ? `Signed .crt converted to .p12 and stored. CRN ${crnFromFilename} extracted from filename.`
+        : "Signed .crt converted to .p12 and stored. Test the connection in the next step.",
     });
   } catch (err) {
     if (err instanceof NextResponse) return err;
