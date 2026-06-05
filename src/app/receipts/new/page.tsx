@@ -6,13 +6,22 @@ export const dynamic    = "force-dynamic";
 export const revalidate = 0;
 
 export default async function NewReceiptPage() {
-  const restaurants = await prisma.restaurant.findMany({
+  const rawRestaurants = await prisma.restaurant.findMany({
     where:   { isActive: true },
     include: {
       departments: { where: { isActive: true } },
     },
     orderBy: { createdAt: "desc" },
   });
+
+  // Only pass departments that are fully configured for fiscalization
+  const restaurants = rawRestaurants.map((r) => ({
+    ...r,
+    departments: r.departments.filter(
+      (d): d is typeof d & { taxDepartmentId: string; taxRegime: string } =>
+        d.taxDepartmentId !== null && d.taxRegime !== null
+    ),
+  }));
 
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)" }}>

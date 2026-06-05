@@ -83,6 +83,34 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
+    if (!cashier.taxCashierId) {
+      return NextResponse.json(
+        { error: "Cashier SRC ID not configured. Enter the SRC Cashier ID from your SRC cabinet in the onboarding wizard (step 5) or via the Cashiers admin page." },
+        { status: 400 }
+      );
+    }
+
+    const department = await prisma.department.findFirst({
+      where: { restaurantId, isDefault: true, isActive: true },
+    });
+    if (!department) {
+      return NextResponse.json(
+        { error: "No active default department configured for this restaurant" },
+        { status: 400 }
+      );
+    }
+    if (!department.taxDepartmentId) {
+      return NextResponse.json(
+        { error: "Department Tax ID not configured. Enter it from your SRC cabinet in the onboarding wizard (step 5) or via the Departments admin page." },
+        { status: 400 }
+      );
+    }
+    if (!department.taxRegime) {
+      return NextResponse.json(
+        { error: "Department Tax Regime not configured. Select it in the onboarding wizard (step 5) or via the Departments admin page." },
+        { status: 400 }
+      );
+    }
 
     const existingReceipt = await prisma.receipt.findUnique({
       where: { restaurantId_externalOrderId: { restaurantId, externalOrderId } },
@@ -91,7 +119,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Receipt with this Order ID already exists" }, { status: 409 });
     }
 
-    // Validate and map inline items — no Product DB lookup
+    // Validate and map inline items — departmentTaxId/taxRegime sourced from DB, not payload
     type MappedItem = {
       name: string; goodCode: string; adgCode: string; unit: string;
       departmentTaxId: string; taxRegime: string;
@@ -101,9 +129,9 @@ export async function POST(req: NextRequest) {
 
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
-      if (!it.name || !it.goodCode || !it.adgCode || !it.unit || !it.quantity || !it.unitPrice || !it.departmentTaxId || !it.taxRegime) {
+      if (!it.name || !it.goodCode || !it.adgCode || !it.unit || !it.quantity || !it.unitPrice) {
         return NextResponse.json(
-          { error: `Item ${i + 1} is missing required fields: name, goodCode, adgCode, unit, quantity, unitPrice, departmentTaxId, taxRegime` },
+          { error: `Item ${i + 1} is missing required fields: name, goodCode, adgCode, unit, quantity, unitPrice` },
           { status: 400 }
         );
       }
@@ -118,8 +146,8 @@ export async function POST(req: NextRequest) {
         goodCode: String(it.goodCode),
         adgCode: String(it.adgCode),
         unit: String(it.unit).slice(0, 50),
-        departmentTaxId: String(it.departmentTaxId),
-        taxRegime: String(it.taxRegime),
+        departmentTaxId: department.taxDepartmentId,
+        taxRegime: department.taxRegime,
         quantity: qty,
         unitPrice: price,
         totalPrice: money(qty * price - discount),

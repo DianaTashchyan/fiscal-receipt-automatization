@@ -9,18 +9,17 @@
 //      b. Try to extract from the certificate body (Subject CN, serialNumber, extensions).
 //      c. Mock mode: auto-assign a deterministic mock CRN.
 //      d. Real mode: return error — CRN must come from the SRC certificate filename or cabinet.
-//   2. Department: uses existing if present; otherwise auto-creates dep=1/taxRegime=1 (VAT).
-//      Rationale: VCR always provides a default department. dep=1 with VAT is the standard
-//      starting point used in seed data, all SRC examples, and VCR's own default configuration.
-//      The regime can be corrected via the Departments page and configureDepartments re-run.
-//   3. Cashier: uses existing if present; otherwise auto-creates taxCashierId="1".
-//      Rationale: VCR always provides a default cashier with internal id=1. SRC assigns IDs
-//      sequentially starting at 1 for a new ECR with a single cashier. The ID is displayed
-//      in the SRC cabinet (ECR list → Cashiers column) and can be corrected via Cashiers page.
+//   2. Department: uses existing if present; otherwise auto-creates "Main Department" placeholder.
+//      The taxDepartmentId and taxRegime must be entered manually (from SRC cabinet) via the
+//      PATCH /api/restaurants/:id/departments/:deptId endpoint in the onboarding wizard step 5.
+//   3. Cashier: uses existing if present; otherwise auto-creates "Online Cashier" placeholder.
+//      The taxCashierId must be entered manually (from SRC cabinet) via the
+//      PATCH /api/restaurants/:id/cashiers/:cashierId endpoint in the onboarding wizard step 5.
 //   4. Calls checkConnection to verify mTLS.
 //   5. Calls activate to move ECR to active state.
-//   6. Calls configureDepartments with the stored taxRegime.
-//   7. Advances srcOnboardingStep for each step that succeeded.
+//   6. Calls configureDepartments with the stored taxRegime (only if taxDepartmentId/taxRegime are set).
+//   7. Auto-generates an API key if none exists (raw key returned once — client must display and copy it).
+//   8. Advances srcOnboardingStep for each step that succeeded.
 //
 // How CRN is obtained:
 //   SRC names the signed certificate file "{TIN}_{CRN}.crt" (e.g. "00493113_52014201.crt").
@@ -31,6 +30,7 @@ import { NextRequest, NextResponse } from "next/server";
 import forge from "node-forge";
 import prisma from "@/lib/prisma/client";
 import { requireRestaurantAccess } from "@/lib/utils/auth";
+import { generateApiKey, hashApiKey } from "@/lib/utils/auth";
 import { decryptCertPassword } from "@/lib/src/cert-crypto";
 import { resolveRestaurantCertConfig } from "@/lib/src/config";
 import { getSrcMode } from "@/lib/src/config";
@@ -43,15 +43,16 @@ export type AutoConfigStatus = {
   crn: string | null;
   crnSource: "certificate" | "database" | "mock-auto" | null;
   crnError: string | null;
-  department: { id: string; name: string; taxDepartmentId: string; taxRegime: string } | null;
+  department: { id: string; name: string; taxDepartmentId: string | null; taxRegime: string | null } | null;
   departmentError: string | null;
-  cashier: { id: string; name: string; taxCashierId: string } | null;
+  cashier: { id: string; name: string; taxCashierId: string | null } | null;
   cashierError: string | null;
   connected: boolean;
   connectionError: string | null;
   activated: boolean;
   activationError: string | null;
   isMockMode: boolean;
+  generatedApiKey: string | null;
 };
 
 function tryExtractCrnFromCert(pfxBuf: Buffer, password: string): string | null {
@@ -87,7 +88,6 @@ function tryExtractCrnFromCert(pfxBuf: Buffer, password: string): string | null 
         }
 
         // Try Subject extensions: look for OIDs that might encode a device ID
-        // (SRC uses a private enterprise OID; without official documentation we scan all string-typed extensions)
         for (const ext of cert.extensions ?? []) {
           const val = (ext as Record<string, unknown>).value;
           if (typeof val === "string" && /^\d{6,12}$/.test(val.trim())) return val.trim();
@@ -117,6 +117,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         srcOnboardingStep: true,
         departments: { where: { isActive: true }, take: 1, select: { id: true, name: true, taxDepartmentId: true, taxRegime: true } },
         cashiers:    { where: { isActive: true }, take: 1, select: { id: true, name: true, taxCashierId: true } },
+        apiKeys:     { where: { isActive: true }, select: { id: true } },
       },
     });
 
@@ -132,15 +133,14 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       connected: false, connectionError: null,
       activated: false, activationError: null,
       isMockMode: isMock,
+      generatedApiKey: null,
     };
 
     // ── 1. Resolve CRN ──────────────────────────────────────────────────────
     if (restaurant.crn) {
-      // Already in DB (set previously)
       status.crn = restaurant.crn;
       status.crnSource = "database";
     } else if (restaurant.srcCertData && restaurant.srcCertPassword) {
-      // Try to extract from certificate
       try {
         const password = decryptCertPassword(restaurant.srcCertPassword);
         const crnFromCert = tryExtractCrnFromCert(
@@ -158,7 +158,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     }
 
     if (!status.crn && isMock) {
-      // Mock mode: auto-assign a deterministic mock CRN
       const mockCrn = `MOCK-${restaurant.tin.slice(0, 6)}`;
       status.crn = mockCrn;
       status.crnSource = "mock-auto";
@@ -172,48 +171,52 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         "It was not embedded in the certificate in any recognised field (Subject CN, serialNumber, or extensions). " +
         "Once SRC approves your u6 application, you will receive the CRN (ՀԴՄ number) in your SRC cabinet → " +
         "ECR list → Registration number column. Contact your SRC representative to obtain it.";
-      // Cannot proceed without CRN in real mode — return partial status
       return NextResponse.json(status, { status: 200 });
     }
 
     const crn = status.crn;
 
-    // ── 2. Department ────────────────────────────────────────────────────────
-    // Use existing department if present. Do NOT auto-create with a hardcoded
-    // taxRegime — the regime varies by business type (VAT, turnover, micro, etc.)
-    // and cannot be determined automatically. The admin must configure it via
-    // the Departments management page, which stores the correct regime in DB.
+    // ── 2. Department — auto-create placeholder if none exists ───────────────
+    // taxDepartmentId is always set to "1" because we define department numbers ourselves
+    // (they are not assigned by SRC). We push dep=1 to SRC via configureDepartments.
     if (restaurant.departments.length > 0) {
-      status.department = restaurant.departments[0];
+      const existing = restaurant.departments[0];
+      if (!existing.taxDepartmentId) {
+        await prisma.department.update({ where: { id: existing.id }, data: { taxDepartmentId: "1" } });
+        status.department = { ...existing, taxDepartmentId: "1" };
+      } else {
+        status.department = existing;
+      }
     } else {
-      status.departmentError =
-        "No department configured. Add one via the Departments management page " +
-        "(select your tax regime: 1=VAT, 2=VAT-exempt, 3=Turnover, 7=Micro). " +
-        "The tax regime cannot be determined automatically — it reflects the company's " +
-        "legal tax classification and is not available from SRC certificate data.";
+      const newDept = await prisma.department.create({
+        data: {
+          restaurantId: id,
+          name: "Main Department",
+          isDefault: true,
+          isActive: true,
+          taxDepartmentId: "1",
+        },
+      });
+      status.department = { id: newDept.id, name: newDept.name, taxDepartmentId: "1", taxRegime: null };
     }
 
-    // ── 3. Cashier ───────────────────────────────────────────────────────────
-    // Use existing cashier if present. Do NOT auto-create with taxCashierId="1":
-    // the SRC VCR API has no getCashierList endpoint, so the actual SRC-assigned
-    // cashier ID cannot be fetched programmatically. SRC assigns IDs sequentially
-    // but the starting value is not always 1. The wrong cashierId causes SRC to
-    // reject fiscal receipts. The admin must configure it via the Cashiers
-    // management page using the ID shown in SRC cabinet → ECR page → Cashiers.
+    // ── 3. Cashier — auto-create placeholder if none exists ──────────────────
     if (restaurant.cashiers.length > 0) {
       status.cashier = restaurant.cashiers[0];
     } else {
-      status.cashierError =
-        "No cashier configured. The SRC VCR API has no getCashierList endpoint — " +
-        "the Tax Cashier ID cannot be fetched automatically. Add a cashier via " +
-        "the Cashiers management page using the ID from your SRC cabinet " +
-        "(ECR page → Cashiers section).";
+      const newCashier = await prisma.cashier.create({
+        data: {
+          restaurantId: id,
+          name: "Online Cashier",
+          isDefault: true,
+          isActive: true,
+        },
+      });
+      status.cashier = { id: newCashier.id, name: newCashier.name, taxCashierId: null };
     }
 
     // ── 4. SRC connection + activation ──────────────────────────────────────
     try {
-      // In mock mode, use the admin resolver (returns MockSrcClient, no cert needed).
-      // In real mode, resolve the restaurant cert and construct the real client directly.
       let client;
       if (isMock) {
         client = await resolveAdminSrcClient(id);
@@ -251,7 +254,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           }
         } catch (e) {
           const msg = e instanceof Error ? e.message : "Activation failed";
-          // SRC error 195/196 = already activated — treat as success
           if (/195|196|already active/i.test(msg)) {
             status.activated = true;
           } else {
@@ -260,8 +262,13 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         }
       }
 
-      // Configure department with SRC using the stored taxRegime (not hardcoded)
-      if (status.department && (status.connected || isMock)) {
+      // Configure department only when both taxDepartmentId and taxRegime are set
+      if (
+        status.department &&
+        status.department.taxDepartmentId &&
+        status.department.taxRegime &&
+        (status.connected || isMock)
+      ) {
         try {
           const seq = await nextSeq(crn);
           const taxRegimeNum = Number(status.department.taxRegime);
@@ -274,13 +281,24 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       status.connectionError = e instanceof Error ? e.message : "Failed to initialise SRC client";
     }
 
+    // ── 5. Auto-generate API key if none exists ──────────────────────────────
+    if (restaurant.apiKeys.length === 0) {
+      const rawKey = generateApiKey();
+      const keyHash = hashApiKey(rawKey);
+      await prisma.restaurantApiKey.create({
+        data: { restaurantId: id, keyHash, label: "POS Terminal", isActive: true },
+      });
+      status.generatedApiKey = rawKey;
+    }
+
     // Advance srcOnboardingStep only as far as operations actually succeeded.
-    // Step numbering matches the old 12-step DB convention (cert=5, conn=6, dept=7, ecr=8, cashier=9).
-    let achievedStep = 5; // cert uploaded — this function was called, so cert is in DB
+    // Step numbering: cert=5, conn=6, dept=7, ecr=8, cashier=9, apiKey=11.
+    let achievedStep = 5;
     if (status.connected) achievedStep = 6;
     if (status.connected && status.department) achievedStep = Math.max(achievedStep, 7);
     if (status.connected && status.activated) achievedStep = Math.max(achievedStep, 8);
     if (status.cashier) achievedStep = Math.max(achievedStep, 9);
+    if (status.generatedApiKey || restaurant.apiKeys.length > 0) achievedStep = Math.max(achievedStep, 11);
 
     const currentStep = restaurant.srcOnboardingStep ?? 0;
     if (achievedStep > currentStep) {

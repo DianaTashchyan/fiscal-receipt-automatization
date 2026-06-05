@@ -7,7 +7,7 @@ import Link from "next/link";
 type Cashier = {
   id: string;
   name: string;
-  taxCashierId: string;
+  taxCashierId: string | null;
   isDefault: boolean;
   isActive: boolean;
   createdAt: string;
@@ -127,7 +127,10 @@ export default function CashiersPage() {
                     <span className="text-sm font-medium text-gray-900">{c.name}</span>
                   </td>
                   <td className="px-5 py-3.5">
-                    <code className="text-sm text-gray-600 bg-gray-100 px-2 py-0.5 rounded font-mono">{c.taxCashierId}</code>
+                    {c.taxCashierId
+                      ? <code className="text-sm text-gray-600 bg-gray-100 px-2 py-0.5 rounded font-mono">{c.taxCashierId}</code>
+                      : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Not configured</span>
+                    }
                   </td>
                   <td className="px-5 py-3.5">
                     {c.isDefault && (

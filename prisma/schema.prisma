@@ -79,6 +79,10 @@ model Restaurant {
   srcCertPath      String?   // alternative: file system path (no DB bytes)
   srcConfiguredAt  DateTime? // when the cert was last stored
 
+  // ---- SRC cabinet registration fields (entered in SRC cabinet form u6) ----
+  platformName      String?   // Software name — SRC cabinet field 5.4
+  websiteUrl        String?   // HTTPS URL — SRC cabinet field 5.3
+
   // ---- CSR / onboarding ----
   srcPrivateKeyEnc  String?   // RSA private key, AES-256-GCM encrypted with CERT_ENCRYPTION_KEY
   srcCsrPem         String?   // PEM-format Certificate Signing Request (safe to share)
@@ -108,8 +112,8 @@ model Cashier {
   id           String     @id @default(cuid())
   restaurantId String
   name         String
-  taxCashierId String
-  pinCodeHash  String
+  taxCashierId String?   // set manually from SRC cabinet after auto-provisioning
+  pinCodeHash  String?   // optional — not needed for API-key-authenticated POS requests
   isDefault    Boolean    @default(false)
   isActive     Boolean    @default(true)
   createdAt    DateTime   @default(now())
@@ -122,8 +126,8 @@ model Department {
   id              String     @id @default(cuid())
   restaurantId    String
   name            String
-  taxDepartmentId String
-  taxRegime       String
+  taxDepartmentId String?   // set manually from SRC cabinet after auto-provisioning
+  taxRegime       String?   // set manually (1=VAT, 2=VAT-exempt, 3=Turnover, 7=Micro)
   isDefault       Boolean    @default(false)
   isActive        Boolean    @default(true)
   createdAt       DateTime   @default(now())

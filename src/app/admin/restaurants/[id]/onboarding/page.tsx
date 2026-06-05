@@ -13,6 +13,7 @@ export default async function OnboardingPage({ params }: Props) {
     where: { id },
     select: {
       id: true, name: true, tin: true, crn: true, address: true,
+      platformName: true, websiteUrl: true,
       srcCsrPem: true, srcCsrCreatedAt: true,
       srcCertData: true, srcCertPath: true, srcConfiguredAt: true,
       srcOnboardingStep: true,
@@ -32,6 +33,9 @@ export default async function OnboardingPage({ params }: Props) {
     tin: restaurant.tin,
     crn: restaurant.crn ?? null,
     address: restaurant.address,
+    platformName: restaurant.platformName ?? null,
+    websiteUrl: restaurant.websiteUrl ?? null,
+    outboundIp: process.env.OUTBOUND_IP ?? null,
     hasCsr: !!restaurant.srcCsrPem,
     csrCreatedAt: restaurant.srcCsrCreatedAt?.toISOString() ?? null,
     hasCert: !!(restaurant.srcCertData || restaurant.srcCertPath),

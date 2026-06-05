@@ -37,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await requireRestaurantAccess(req, id);
 
     const body = await req.json();
-    const { name, tin, crn, address, logoUrl, isActive, srcOnboardingStep } = body;
+    const { name, tin, crn, address, logoUrl, isActive, srcOnboardingStep, platformName, websiteUrl } = body;
 
     if (tin !== undefined && !isValidTin(tin)) {
       return NextResponse.json({ error: "tin must be an 8-digit number" }, { status: 400 });
@@ -48,6 +48,9 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     }
     if (srcOnboardingStep !== undefined && (!Number.isInteger(srcOnboardingStep) || srcOnboardingStep < 0 || srcOnboardingStep > 13)) {
       return NextResponse.json({ error: "srcOnboardingStep must be an integer 0–13" }, { status: 400 });
+    }
+    if (websiteUrl !== undefined && websiteUrl !== null && websiteUrl !== "" && !/^https?:\/\/.+/.test(String(websiteUrl))) {
+      return NextResponse.json({ error: "websiteUrl must start with https://" }, { status: 400 });
     }
 
     const restaurant = await prisma.restaurant.update({
@@ -60,6 +63,8 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         ...(logoUrl !== undefined && { logoUrl: logoUrl ?? null }),
         ...(isActive !== undefined && { isActive: Boolean(isActive) }),
         ...(srcOnboardingStep !== undefined && { srcOnboardingStep: Number(srcOnboardingStep) }),
+        ...(platformName !== undefined && { platformName: platformName === null || platformName === "" ? null : String(platformName).trim() }),
+        ...(websiteUrl !== undefined && { websiteUrl: websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim() }),
       },
     });
 

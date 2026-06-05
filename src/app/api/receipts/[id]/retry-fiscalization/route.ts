@@ -35,6 +35,37 @@ export async function POST(
     if (!receipt.cashier) {
       return NextResponse.json({ error: "Receipt cashier not found" }, { status: 400 });
     }
+    if (!receipt.cashier.taxCashierId) {
+      return NextResponse.json(
+        { error: "Cashier SRC ID not configured. Enter the SRC Cashier ID from your SRC cabinet in the onboarding wizard (step 5) or via the Cashiers admin page." },
+        { status: 400 }
+      );
+    }
+
+    const department = await prisma.department.findFirst({
+      where: { restaurantId: receipt.restaurant.id, isDefault: true, isActive: true },
+    });
+    if (!department) {
+      return NextResponse.json(
+        { error: "No active default department configured for this restaurant" },
+        { status: 400 }
+      );
+    }
+    if (!department.taxDepartmentId) {
+      return NextResponse.json(
+        { error: "Department Tax ID not configured. Enter it from your SRC cabinet in the onboarding wizard (step 5) or via the Departments admin page." },
+        { status: 400 }
+      );
+    }
+    if (!department.taxRegime) {
+      return NextResponse.json(
+        { error: "Department Tax Regime not configured. Select it in the onboarding wizard (step 5) or via the Departments admin page." },
+        { status: 400 }
+      );
+    }
+
+    const deptTaxId = department.taxDepartmentId as string;
+
     if (!receipt.items.length) {
       return NextResponse.json({ error: "Receipt has no items" }, { status: 400 });
     }
@@ -88,7 +119,7 @@ export async function POST(
         paymentMethod: receipt.paymentMethod,
         items: receipt.items.map((item) => ({
           externalProductId: item.externalProductId,
-          departmentTaxId: item.departmentTaxId,
+          departmentTaxId: deptTaxId,
           quantity: item.quantity.toString(),
           unitPrice: item.unitPrice.toString(),
           discountAmount: item.discountAmount.toString(),

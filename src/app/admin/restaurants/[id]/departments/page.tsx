@@ -7,8 +7,8 @@ import Link from "next/link";
 type Dept = {
   id: string;
   name: string;
-  taxDepartmentId: string;
-  taxRegime: string;
+  taxDepartmentId: string | null;
+  taxRegime: string | null;
   isDefault: boolean;
 };
 
@@ -175,10 +175,16 @@ export default function DepartmentsPage() {
                     <span className="text-sm font-medium text-gray-900">{d.name}</span>
                   </td>
                   <td className="px-5 py-3.5">
-                    <code className="text-sm text-gray-600 bg-gray-100 px-2 py-0.5 rounded font-mono">{d.taxDepartmentId}</code>
+                    {d.taxDepartmentId
+                      ? <code className="text-sm text-gray-600 bg-gray-100 px-2 py-0.5 rounded font-mono">{d.taxDepartmentId}</code>
+                      : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Not configured</span>
+                    }
                   </td>
                   <td className="px-5 py-3.5">
-                    <span className="text-sm text-gray-700">{REGIMES[d.taxRegime] ?? `Regime ${d.taxRegime}`}</span>
+                    {d.taxRegime
+                      ? <span className="text-sm text-gray-700">{REGIMES[d.taxRegime] ?? `Regime ${d.taxRegime}`}</span>
+                      : <span className="text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">Not configured</span>
+                    }
                   </td>
                   <td className="px-5 py-3.5">
                     {d.isDefault && (
