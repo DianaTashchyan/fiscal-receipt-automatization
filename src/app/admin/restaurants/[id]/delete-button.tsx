@@ -10,20 +10,36 @@ export default function DeleteRestaurantButton({ id, name }: { id: string; name:
   async function handleDelete() {
     setLoading(true);
     setError("");
-    const token = typeof window !== "undefined" ? localStorage.getItem("admin_token") : null;
+
+    const token = localStorage.getItem("admin_token") ?? "";
+
+    // Missing token means the session was never established
+    if (!token) {
+      window.location.href = "/admin/login";
+      return;
+    }
+
     const res = await fetch(`/api/restaurants/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token ?? ""}` },
+      headers: { Authorization: `Bearer ${token}` },
     });
+
+    // 401 means the token is expired or invalid — clear it and force re-login
+    if (res.status === 401 || res.status === 403) {
+      localStorage.removeItem("admin_token");
+      window.location.href = "/admin/login";
+      return;
+    }
+
     const data = await res.json();
     if (!res.ok) {
       setError(data.error ?? "Delete failed");
       setLoading(false);
-      // Keep confirming=true so the error stays visible
       return;
     }
-    // Hard navigation bypasses the Next.js router cache entirely,
-    // guaranteeing the list is re-fetched from the server after deletion.
+
+    // Hard navigation bypasses the Next.js router cache so the list
+    // is re-fetched from the server and shows the restaurant as gone.
     window.location.href = "/admin/restaurants";
   }
 
