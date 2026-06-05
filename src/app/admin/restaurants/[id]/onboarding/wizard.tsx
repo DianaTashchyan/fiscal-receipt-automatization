@@ -64,6 +64,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     if (dbStep <= 0) return 1;
     if (dbStep <= 2) return dbStep;
     if (dbStep === 3) return 3;
+    if (dbStep === 4) return 4;
     if (dbStep <= 9) return 5;
     if (dbStep <= 10) return 6;
     if (dbStep <= 11) return 7;

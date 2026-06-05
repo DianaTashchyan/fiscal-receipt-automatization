@@ -1,8 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import QRCode from "qrcode";
 import prisma from "@/lib/prisma/client";
-import { requireAuth } from "@/lib/utils/auth";
 
 function money(value: unknown) {
   return `${Number(value).toFixed(2)} AMD`;
@@ -18,14 +17,9 @@ function short(value: unknown, max = 32) {
 }
 
 export async function GET(
-  req: NextRequest,
+  _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  try { await requireAuth(req); } catch (err) {
-    if (err instanceof NextResponse) return err;
-    return new Response("Unauthorized", { status: 401 });
-  }
-
   const { id } = await params;
 
   const receipt = await prisma.receipt.findUnique({

@@ -2,7 +2,7 @@ import Link from "next/link";
 import ReceiptCreateForm from "./receipt-create-form";
 import prisma from "@/lib/prisma/client";
 
-export const dynamic  = "force-dynamic";
+export const dynamic    = "force-dynamic";
 export const revalidate = 0;
 
 export default async function NewReceiptPage() {
@@ -16,25 +16,26 @@ export default async function NewReceiptPage() {
   });
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
-        {/* Header */}
-        <div className="mb-8">
+    <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)" }}>
+      {/* Hero header */}
+      <div style={{ background: "linear-gradient(135deg, #0d1117 0%, #1a1f2e 100%)" }}>
+        <div className="max-w-3xl mx-auto px-6 py-8">
           <Link
             href="/receipts"
-            className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 mb-3 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-white/60 hover:text-white mb-4 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
             </svg>
             Receipts
           </Link>
-          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Create Receipt</h1>
-          <p className="text-sm text-gray-500 mt-1">
-            Manually create a fiscal receipt. The receipt will be fiscalized with the SRC immediately.
-          </p>
+          <p className="text-xs font-semibold text-indigo-400 uppercase tracking-widest mb-1">Create</p>
+          <h1 className="text-2xl font-bold text-white tracking-tight">New Fiscal Receipt</h1>
+          <p className="text-sm text-slate-400 mt-1">Manually create and fiscalize a receipt with the SRC immediately.</p>
         </div>
+      </div>
 
+      <div className="max-w-3xl mx-auto px-6 py-8">
         <ReceiptCreateForm restaurants={restaurants} />
       </div>
     </div>

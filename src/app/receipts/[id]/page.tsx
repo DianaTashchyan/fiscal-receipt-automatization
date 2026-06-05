@@ -6,14 +6,14 @@ import { notFound } from "next/navigation";
 import QRCode from "qrcode";
 import prisma from "@/lib/prisma/client";
 
-function statusClass(status: string) {
+function statusBg(status: string) {
   switch (status) {
-    case "FISCALIZED":  return "bg-emerald-100 text-emerald-700";
-    case "FAILED":      return "bg-red-100 text-red-700";
+    case "FISCALIZED":  return "linear-gradient(135deg, #059669, #047857)";
+    case "FAILED":      return "linear-gradient(135deg, #dc2626, #b91c1c)";
     case "PENDING":
-    case "FISCALIZING": return "bg-amber-100 text-amber-700";
-    case "SENT":        return "bg-blue-100 text-blue-700";
-    default:            return "bg-gray-100 text-gray-600";
+    case "FISCALIZING": return "linear-gradient(135deg, #d97706, #b45309)";
+    case "SENT":        return "linear-gradient(135deg, #6366f1, #4f46e5)";
+    default:            return "linear-gradient(135deg, #6b7280, #4b5563)";
   }
 }
 
@@ -36,13 +36,13 @@ export default async function ReceiptDetailsPage({
   const date    = new Date(receipt.createdAt);
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-3xl mx-auto px-4 sm:px-6 py-10">
-        {/* Header */}
-        <div className="mb-8">
+    <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)" }}>
+      {/* Status hero bar */}
+      <div style={{ background: statusBg(receipt.status) }}>
+        <div className="max-w-4xl mx-auto px-6 py-8">
           <Link
             href="/receipts"
-            className="inline-flex items-center gap-1 text-sm text-gray-400 hover:text-gray-600 mb-3 transition-colors"
+            className="inline-flex items-center gap-1.5 text-sm text-white/70 hover:text-white mb-5 transition-colors"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
@@ -50,127 +50,169 @@ export default async function ReceiptDetailsPage({
             All Receipts
           </Link>
 
-          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+          <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">
             <div>
-              <div className="flex items-center gap-3 mb-1">
-                <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Receipt Details</h1>
-                <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${statusClass(receipt.status)}`}>
+              <div className="flex items-center gap-3 mb-2">
+                <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-white/20 text-white uppercase tracking-wide border border-white/30">
                   {receipt.status}
                 </span>
               </div>
-              <code className="text-xs font-mono text-gray-500 bg-gray-100 px-2 py-1 rounded">{receipt.externalOrderId}</code>
+              <h1 className="text-2xl font-bold text-white tracking-tight">Receipt Details</h1>
+              <p className="text-white/60 text-sm mt-1 font-mono">{receipt.externalOrderId}</p>
             </div>
-            <div className="flex gap-2">
+
+            <div className="flex flex-wrap gap-2">
               <SendEmailButton receiptId={receipt.id} defaultEmail={receipt.customerEmail} />
               <SendSmsButton receiptId={receipt.id} defaultPhone={receipt.customerPhone} />
               <a
                 href={`/api/receipts/${receipt.id}/pdf`}
                 target="_blank"
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-gray-900 text-white rounded-lg text-sm font-semibold hover:bg-gray-800 transition-colors"
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 hover:bg-white/25 border border-white/30 text-white rounded-xl text-sm font-semibold transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
-                PDF
+                Download PDF
               </a>
             </div>
           </div>
-        </div>
 
-        <div className="space-y-5">
-          {/* General + QR side by side */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            <div className="sm:col-span-2 bg-white border border-gray-200 rounded-2xl p-6">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4">General</h2>
-              <dl className="space-y-2.5">
+          {/* Summary strip */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+            {[
+              { label: "Total Amount",   value: `${Number(receipt.totalAmount).toLocaleString()} ֏` },
+              { label: "Fiscal Number",  value: receipt.fiscalNumber ?? "—" },
+              { label: "Date",           value: date.toLocaleDateString() },
+              { label: "Payment",        value: receipt.paymentMethod },
+            ].map((s) => (
+              <div key={s.label} className="bg-white/10 border border-white/20 rounded-xl px-4 py-3">
+                <p className="text-xs text-white/50 uppercase tracking-wide">{s.label}</p>
+                <p className="text-sm font-bold text-white mt-0.5 truncate">{s.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-4xl mx-auto px-6 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left column — details */}
+          <div className="lg:col-span-2 space-y-5">
+            {/* General */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-sm font-bold text-gray-900">Transaction Details</h2>
+              </div>
+              <dl className="divide-y divide-gray-50">
                 {[
-                  { label: "Status",           value: receipt.status },
-                  { label: "Fiscal Number",    value: receipt.fiscalNumber ?? "—" },
-                  { label: "Receipt Number",   value: receipt.receiptNumber ?? "—" },
-                  { label: "Cash Register SN", value: receipt.srcSn ?? "—" },
-                  { label: "SRC Mode",         value: receipt.srcMode ?? "—" },
-                  { label: "Payment",          value: receipt.paymentMethod },
-                  { label: "Date",             value: date.toLocaleDateString() },
-                  { label: "Time",             value: date.toLocaleTimeString() },
-                  { label: "Cashier",          value: receipt.cashier?.name ?? "—" },
-                  { label: "Tax Cashier ID",   value: receipt.cashier?.taxCashierId ?? "—" },
-                ].map(({ label, value }) => (
-                  <div key={label} className="flex items-start justify-between gap-4">
-                    <dt className="text-xs text-gray-500 shrink-0 pt-0.5">{label}</dt>
-                    <dd className="text-sm text-gray-900 font-medium text-right break-all">{value}</dd>
+                  { label: "Order ID",        value: receipt.externalOrderId, mono: true },
+                  { label: "Receipt Number",  value: receipt.receiptNumber ?? "—", mono: true },
+                  { label: "Fiscal Number",   value: receipt.fiscalNumber ?? "—", mono: true },
+                  { label: "Cash Register",   value: receipt.srcSn ?? "—", mono: true },
+                  { label: "SRC Mode",        value: receipt.srcMode ?? "—" },
+                  { label: "Payment",         value: receipt.paymentMethod },
+                  { label: "Cashier",         value: receipt.cashier?.name ?? "—" },
+                  { label: "Tax Cashier ID",  value: receipt.cashier?.taxCashierId ?? "—", mono: true },
+                  { label: "Date & Time",     value: `${date.toLocaleDateString()} ${date.toLocaleTimeString()}` },
+                ].map(({ label, value, mono }) => (
+                  <div key={label} className="flex items-center justify-between px-5 py-3">
+                    <dt className="text-xs text-gray-500 font-medium">{label}</dt>
+                    <dd className={`text-sm font-semibold text-gray-900 text-right max-w-[60%] break-all ${mono ? "font-mono text-xs bg-gray-100 px-2 py-0.5 rounded" : ""}`}>{value}</dd>
                   </div>
                 ))}
               </dl>
             </div>
 
-            <div className="bg-white border border-gray-200 rounded-2xl p-6 flex flex-col items-center justify-center">
-              <h2 className="text-sm font-semibold text-gray-900 mb-4 self-start">QR Code</h2>
-              <Image src={qrImage} alt="Receipt QR Code" width={160} height={160} unoptimized className="rounded-lg" />
-              <p className="mt-3 text-xs text-gray-400 text-center break-all leading-relaxed">{qrText}</p>
-            </div>
-          </div>
-
-          {/* Restaurant */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">Restaurant</h2>
-            <dl className="grid grid-cols-2 gap-x-8 gap-y-2.5">
-              {[
-                { label: "Name",    value: receipt.restaurant.name },
-                { label: "TIN",     value: receipt.restaurant.tin },
-                { label: "CRN",     value: receipt.restaurant.crn ?? "—" },
-                { label: "Address", value: receipt.restaurant.address ?? "—" },
-              ].map(({ label, value }) => (
-                <div key={label}>
-                  <dt className="text-xs text-gray-500 mb-0.5">{label}</dt>
-                  <dd className="text-sm text-gray-900 font-medium">{value}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-
-          {/* Items */}
-          <div className="bg-white border border-gray-200 rounded-2xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-gray-100 bg-gray-50/50">
-              <h2 className="text-sm font-semibold text-gray-900">Items</h2>
-            </div>
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-100">
-                  {["Name", "Qty", "Unit Price", "Total"].map((h) => (
-                    <th key={h} className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wide">{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-50">
-                {receipt.items.map((item) => (
-                  <tr key={item.id} className="hover:bg-gray-50/50">
-                    <td className="px-6 py-3.5 text-sm font-medium text-gray-900">{item.name}</td>
-                    <td className="px-6 py-3.5 text-sm text-gray-600">{item.quantity.toString()}</td>
-                    <td className="px-6 py-3.5 text-sm text-gray-600">{item.unitPrice.toString()} ֏</td>
-                    <td className="px-6 py-3.5 text-sm font-semibold text-gray-900">{item.totalPrice.toString()} ֏</td>
-                  </tr>
+            {/* Restaurant */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-sm font-bold text-gray-900">Restaurant</h2>
+              </div>
+              <dl className="divide-y divide-gray-50">
+                {[
+                  { label: "Name",    value: receipt.restaurant.name },
+                  { label: "TIN",     value: receipt.restaurant.tin, mono: true },
+                  { label: "CRN",     value: receipt.restaurant.crn ?? "—", mono: true },
+                  { label: "Address", value: receipt.restaurant.address ?? "—" },
+                ].map(({ label, value, mono }) => (
+                  <div key={label} className="flex items-center justify-between px-5 py-3">
+                    <dt className="text-xs text-gray-500 font-medium">{label}</dt>
+                    <dd className={`text-sm font-semibold text-gray-900 text-right ${mono ? "font-mono text-xs bg-gray-100 px-2 py-0.5 rounded" : ""}`}>{value}</dd>
+                  </div>
                 ))}
-              </tbody>
-            </table>
+              </dl>
+            </div>
+
+            {/* Items */}
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-sm font-bold text-gray-900">Items</h2>
+              </div>
+              <table className="w-full">
+                <thead>
+                  <tr className="bg-gray-50/50">
+                    {["Product", "Qty", "Unit Price", "Total"].map((h) => (
+                      <th key={h} className="px-5 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-50">
+                  {receipt.items.map((item) => (
+                    <tr key={item.id} className="hover:bg-gray-50/50">
+                      <td className="px-5 py-4 text-sm font-semibold text-gray-900">{item.name}</td>
+                      <td className="px-5 py-4 text-sm text-gray-600">{item.quantity.toString()}</td>
+                      <td className="px-5 py-4 text-sm text-gray-600">{Number(item.unitPrice).toLocaleString()} ֏</td>
+                      <td className="px-5 py-4 text-sm font-bold text-gray-900">{Number(item.totalPrice).toLocaleString()} ֏</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="px-5 py-4 bg-gray-50/50 border-t border-gray-100 space-y-2">
+                <div className="flex justify-between text-sm text-gray-500">
+                  <span>Bill</span><span className="font-semibold">{Number(receipt.billAmount).toLocaleString()} ֏</span>
+                </div>
+                <div className="flex justify-between text-sm text-gray-500">
+                  <span>Tip</span><span className="font-semibold">{Number(receipt.tipAmount).toLocaleString()} ֏</span>
+                </div>
+                <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
+                  <span>Total</span><span>{Number(receipt.totalAmount).toLocaleString()} ֏</span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Totals */}
-          <div className="bg-white border border-gray-200 rounded-2xl p-6">
-            <h2 className="text-sm font-semibold text-gray-900 mb-4">Totals</h2>
-            <dl className="space-y-2">
-              <div className="flex justify-between items-center">
-                <dt className="text-sm text-gray-500">Bill</dt>
-                <dd className="text-sm font-semibold text-gray-900">{receipt.billAmount.toString()} ֏</dd>
+          {/* Right column — QR */}
+          <div className="space-y-5">
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-sm font-bold text-gray-900">QR Code</h2>
               </div>
-              <div className="flex justify-between items-center">
-                <dt className="text-sm text-gray-500">Tip</dt>
-                <dd className="text-sm font-semibold text-gray-900">{receipt.tipAmount.toString()} ֏</dd>
+              <div className="p-5 flex flex-col items-center">
+                <div className="p-3 bg-gray-50 rounded-xl border border-gray-100">
+                  <Image src={qrImage} alt="Receipt QR Code" width={180} height={180} unoptimized />
+                </div>
+                <p className="mt-4 text-xs text-gray-400 text-center break-all leading-relaxed">{qrText}</p>
               </div>
-              <div className="flex justify-between items-center pt-2 border-t border-gray-100">
-                <dt className="text-base font-bold text-gray-900">Total</dt>
-                <dd className="text-xl font-bold text-gray-900">{receipt.totalAmount.toString()} ֏</dd>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+              <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                <h2 className="text-sm font-bold text-gray-900">Actions</h2>
               </div>
-            </dl>
+              <div className="p-4 space-y-2">
+                <a
+                  href={`/api/receipts/${receipt.id}/pdf`}
+                  target="_blank"
+                  className="flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+                  style={{ background: "linear-gradient(135deg, #0d1117, #1a1f2e)" }}
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                  Open PDF
+                </a>
+              </div>
+            </div>
           </div>
         </div>
       </div>
