@@ -25,11 +25,16 @@ const STEPS = [
   { n: 2, title: "Generate CSR",     short: "CSR",         description: "Create your cryptographic key pair" },
   { n: 3, title: "Register with SRC", short: "Register",   description: "Submit CSR to the SRC taxpayer portal" },
   { n: 4, title: "Upload Certificate", short: "Certificate", description: "Upload the signed certificate from SRC" },
-  { n: 5, title: "Auto-Setup",       short: "Auto-Setup",  description: "Automated configuration of all SRC parameters" },
+  { n: 5, title: "SRC Configuration", short: "Configure",   description: "Enter cashier ID and tax regime from your SRC cabinet" },
   { n: 6, title: "Products",         short: "Products",    description: "Add products required for fiscal receipts" },
   { n: 7, title: "API Key",          short: "API Key",     description: "Generate your POS integration key" },
   { n: 8, title: "Complete",         short: "Done",        description: "Verify with a test receipt" },
 ];
+
+function taxRegimeName(regime: string): string {
+  const map: Record<string, string> = { "1": "VAT", "2": "VAT-exempt", "3": "Turnover tax", "7": "Micro business" };
+  return map[regime] ?? `Regime ${regime}`;
+}
 
 function getToken() {
   if (typeof window === "undefined") return null;
@@ -130,6 +135,64 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     return null;
   });
   const [autoConfigLoading, setAutoConfigLoading] = useState(false);
+
+  // ── Inline department form ────────────────────────────────────────────────
+  const [deptName, setDeptName]           = useState("Main Department");
+  const [deptTaxDeptId, setDeptTaxDeptId] = useState("1");
+  const [deptTaxRegime, setDeptTaxRegime] = useState("1");
+  const [deptSaving, setDeptSaving]       = useState(false);
+  const [deptError, setDeptError]         = useState("");
+
+  // ── Inline cashier form ──────────────────────────────────────────────────
+  const [cashierName, setCashierName]     = useState("Cashier");
+  const [cashierTaxId, setCashierTaxId]   = useState("");
+  const [cashierPin, setCashierPin]       = useState("");
+  const [cashierSaving, setCashierSaving] = useState(false);
+  const [cashierError, setCashierError]   = useState("");
+
+  async function doSaveDepartment() {
+    if (!deptName.trim()) { setDeptError("Department name is required."); return; }
+    if (!deptTaxDeptId.trim() || !Number.isInteger(Number(deptTaxDeptId.trim()))) {
+      setDeptError("Tax Department ID must be a whole number."); return;
+    }
+    if (!["1", "2", "3", "7"].includes(deptTaxRegime)) { setDeptError("Select a tax regime."); return; }
+    setDeptSaving(true); setDeptError("");
+    const r = await callApi(`/api/restaurants/${restaurant.id}/departments`, "POST", {
+      name: deptName.trim(), taxDepartmentId: deptTaxDeptId.trim(), taxRegime: deptTaxRegime, isDefault: true,
+    });
+    setDeptSaving(false);
+    if (r.ok) {
+      const dept = r.data as { id: string; name: string; taxDepartmentId: string; taxRegime: string };
+      setRestaurant((prev) => ({
+        ...prev,
+        departments: [{ id: dept.id, name: dept.name, taxDepartmentId: dept.taxDepartmentId, taxRegime: dept.taxRegime }, ...prev.departments],
+      }));
+      await advanceDbStep(6);
+    } else {
+      setDeptError((r.data.error as string) ?? "Failed to save department.");
+    }
+  }
+
+  async function doSaveCashier() {
+    if (!cashierName.trim()) { setCashierError("Cashier name is required."); return; }
+    if (!cashierTaxId.trim()) { setCashierError("SRC Cashier ID is required."); return; }
+    if (cashierPin.length < 4) { setCashierError("PIN must be at least 4 characters."); return; }
+    setCashierSaving(true); setCashierError("");
+    const r = await callApi(`/api/restaurants/${restaurant.id}/cashiers`, "POST", {
+      name: cashierName.trim(), taxCashierId: cashierTaxId.trim(), pinCode: cashierPin, isDefault: true,
+    });
+    setCashierSaving(false);
+    if (r.ok) {
+      const c = r.data as { id: string; name: string; taxCashierId: string };
+      setRestaurant((prev) => ({
+        ...prev,
+        cashiers: [{ id: c.id, name: c.name, taxCashierId: c.taxCashierId, isDefault: true }, ...prev.cashiers],
+      }));
+      await advanceDbStep(7);
+    } else {
+      setCashierError((r.data.error as string) ?? "Failed to save cashier.");
+    }
+  }
 
   async function runAutoConfig() {
     setAutoConfigLoading(true);
@@ -263,7 +326,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
     setLoading(true); setResult(null);
     const buf        = await certFile.arrayBuffer();
     const crtBase64  = btoa(String.fromCharCode(...new Uint8Array(buf)));
-    const r = await callApi(`/api/restaurants/${restaurant.id}/upload-crt`, "POST", { crtBase64 });
+    const r = await callApi(`/api/restaurants/${restaurant.id}/upload-crt`, "POST", { crtBase64, filename: certFile.name });
     if (r.ok) {
       setRestaurant((prev) => ({ ...prev, hasCert: true }));
       await advanceDbStep(5);
@@ -868,9 +931,105 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                 </div>
               )}
 
-              <div className="bg-gray-50 border border-gray-100 rounded-xl px-4 py-3 text-xs text-gray-500 leading-relaxed">
-                <strong className="text-gray-600">Note on cashier ID:</strong> The SRC API has no endpoint to fetch cashier data. SRC assigns ID&nbsp;1 to the first cashier registered during u6 approval, which is used automatically.
-              </div>
+              {/* ── Department form ── */}
+              {restaurant.departments.length === 0 ? (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <p className="text-sm font-semibold text-gray-700">Department</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Enter values from your SRC cabinet — Departments section</p>
+                  </div>
+                  <div className="px-4 py-4 space-y-3">
+                    <FormField label="Department Name" required>
+                      <input
+                        value={deptName}
+                        onChange={(e) => { setDeptName(e.target.value); setDeptError(""); }}
+                        placeholder="Main Department"
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                    </FormField>
+                    <FormField label="Tax Department ID" required>
+                      <input
+                        value={deptTaxDeptId}
+                        onChange={(e) => { setDeptTaxDeptId(e.target.value); setDeptError(""); }}
+                        placeholder="1"
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                    </FormField>
+                    <FormField label="Tax Regime" required>
+                      <select
+                        value={deptTaxRegime}
+                        onChange={(e) => { setDeptTaxRegime(e.target.value); setDeptError(""); }}
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      >
+                        <option value="1">1 — VAT</option>
+                        <option value="2">2 — VAT-exempt</option>
+                        <option value="3">3 — Turnover tax</option>
+                        <option value="7">7 — Micro business</option>
+                      </select>
+                    </FormField>
+                    {deptError && <InlineError message={deptError} />}
+                    <PrimaryButton onClick={doSaveDepartment} loading={deptSaving} label="Save Department" />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    Department: <strong>{restaurant.departments[0].name}</strong> — ID {restaurant.departments[0].taxDepartmentId} — {taxRegimeName(restaurant.departments[0].taxRegime)}
+                  </span>
+                </div>
+              )}
+
+              {/* ── Cashier form ── */}
+              {restaurant.cashiers.length === 0 ? (
+                <div className="border border-gray-200 rounded-xl overflow-hidden">
+                  <div className="px-4 py-3 bg-gray-50 border-b border-gray-200">
+                    <p className="text-sm font-semibold text-gray-700">Cashier</p>
+                    <p className="text-xs text-gray-400 mt-0.5">Enter values from your SRC cabinet — Cashiers section</p>
+                  </div>
+                  <div className="px-4 py-4 space-y-3">
+                    <FormField label="Cashier Name" required>
+                      <input
+                        value={cashierName}
+                        onChange={(e) => { setCashierName(e.target.value); setCashierError(""); }}
+                        placeholder="Cashier"
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                    </FormField>
+                    <FormField label="SRC Cashier ID" required>
+                      <input
+                        value={cashierTaxId}
+                        onChange={(e) => { setCashierTaxId(e.target.value); setCashierError(""); }}
+                        placeholder="1"
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm font-mono bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                    </FormField>
+                    <FormField label="PIN" required>
+                      <input
+                        type="password"
+                        value={cashierPin}
+                        onChange={(e) => { setCashierPin(e.target.value); setCashierError(""); }}
+                        placeholder="Min 4 characters"
+                        autoComplete="new-password"
+                        className="w-full border border-gray-200 rounded-lg px-3.5 py-2.5 text-sm bg-gray-50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                      />
+                    </FormField>
+                    {cashierError && <InlineError message={cashierError} />}
+                    <PrimaryButton onClick={doSaveCashier} loading={cashierSaving} label="Save Cashier" />
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3 px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl text-sm text-emerald-700">
+                  <svg className="w-4 h-4 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <span>
+                    Cashier: <strong>{restaurant.cashiers[0].name}</strong> — SRC ID {restaurant.cashiers[0].taxCashierId}
+                  </span>
+                </div>
+              )}
 
               {autoConfig?.crnError && (
                 <Notice variant="error">
@@ -891,7 +1050,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
                 )}
               </div>
 
-              {autoConfig && !autoConfig.crnError && (
+              {autoConfig && !autoConfig.crnError && restaurant.departments.length > 0 && restaurant.cashiers.length > 0 && (
                 <ActionBar
                   onNext={() => goTo(6)}
                   nextLabel="Continue to products →"
