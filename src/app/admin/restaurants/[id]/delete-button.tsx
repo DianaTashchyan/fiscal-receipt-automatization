@@ -21,10 +21,12 @@ export default function DeleteRestaurantButton({ id, name }: { id: string; name:
     if (!res.ok) {
       setError(data.error ?? "Delete failed");
       setLoading(false);
-      setConfirming(false);
+      // Keep confirming=true so the error stays visible
       return;
     }
+    // refresh() invalidates the router cache so the list re-fetches fresh data
     router.push("/admin/restaurants");
+    router.refresh();
   }
 
   if (confirming) {
