@@ -1279,19 +1279,15 @@ function SrcCabinetPanel({
   onGoToStep1?: () => void;
 }) {
   const [copied, setCopied] = useState<string | null>(null);
+  const [ipEditMode, setIpEditMode] = useState(false);
+  const [ipInput, setIpInput] = useState("");
+  const [ipSaving, setIpSaving] = useState(false);
+  const [ipError, setIpError] = useState<string | null>(null);
+  // Local display IP — updated after user saves a manual override
+  const [displayIp, setDisplayIp] = useState<string | null>(outboundIp);
 
-  // Parse all resolved IPs (comma-separated from DB); first one is the primary SRC value.
-  const ips = outboundIp ? outboundIp.split(",").map((s) => s.trim()).filter(Boolean) : [];
-  const primaryIp = ips[0] ?? null;
-  const multipleIps = ips.length > 1;
-
+  const primaryIp = displayIp ?? null;
   const hostname = (() => { try { return websiteUrl ? new URL(websiteUrl).hostname : null; } catch { return null; } })();
-
-  const ipHint = primaryIp && hostname
-    ? multipleIps
-      ? `${ips.length} A records for ${hostname} — enter the primary one in SRC field 5.2`
-      : `resolved from ${hostname}`
-    : null;
 
   async function copy(value: string, key: string) {
     await navigator.clipboard.writeText(value);
@@ -1301,9 +1297,9 @@ function SrcCabinetPanel({
 
   async function copyAll() {
     const parts = [
-      primaryIp     ? `Field 5.2 IP address:    ${primaryIp}` : null,
-      websiteUrl    ? `Field 5.3 Website URL:   ${websiteUrl}` : null,
-      platformName  ? `Field 5.4 Platform name: ${platformName}` : null,
+      primaryIp    ? `Field 5.2 IP address:    ${primaryIp}` : null,
+      websiteUrl   ? `Field 5.3 Website URL:   ${websiteUrl}` : null,
+      platformName ? `Field 5.4 Platform name: ${platformName}` : null,
     ].filter(Boolean);
     if (!parts.length) return;
     await navigator.clipboard.writeText(parts.join("\n"));
@@ -1311,10 +1307,36 @@ function SrcCabinetPanel({
     setTimeout(() => setCopied((c) => (c === "all" ? null : c)), 2000);
   }
 
-  const rows: { field: string; label: string; value: string | null; allValues?: string[]; hint: string | null; key: string }[] = [
-    { field: "5.2", label: "IP address",    value: primaryIp,   allValues: multipleIps ? ips : undefined, hint: ipHint,  key: "ip" },
-    { field: "5.3", label: "Website URL",   value: websiteUrl,   hint: null,    key: "url" },
-    { field: "5.4", label: "Platform name", value: platformName, hint: null,    key: "platform" },
+  function startIpEdit() {
+    setIpInput(primaryIp ?? "");
+    setIpError(null);
+    setIpEditMode(true);
+  }
+
+  async function saveIpEdit() {
+    const val = ipInput.trim();
+    if (val && !/^\d{1,3}(\.\d{1,3}){3}$/.test(val)) {
+      setIpError("Enter a valid IPv4 address (e.g. 159.89.213.138)");
+      return;
+    }
+    setIpSaving(true);
+    setIpError(null);
+    const res = await api(`/api/restaurants/${restaurantId}`, "PATCH", {
+      srcIpAddress: val || null,
+    });
+    setIpSaving(false);
+    if (!res.ok) {
+      setIpError((res.data as { error?: string }).error ?? "Save failed");
+      return;
+    }
+    setDisplayIp(val || null);
+    setIpEditMode(false);
+  }
+
+  const rows: { field: string; label: string; value: string | null; hint: string | null; key: string; editable?: boolean }[] = [
+    { field: "5.2", label: "IP address",    value: primaryIp,   hint: hostname ? `resolved from ${hostname}` : null, key: "ip",       editable: true },
+    { field: "5.3", label: "Website URL",   value: websiteUrl,   hint: null,                                          key: "url" },
+    { field: "5.4", label: "Platform name", value: platformName, hint: null,                                          key: "platform" },
   ];
 
   return (
@@ -1324,7 +1346,7 @@ function SrcCabinetPanel({
           <p className="text-sm font-semibold text-blue-900">Information to enter in SRC cabinet</p>
           <p className="text-xs text-blue-700 mt-0.5">Copy these values into the u6 form fields before uploading your CSR.</p>
         </div>
-        {rows.some((r) => r.value) && (
+        {rows.some((r) => r.value) && !ipEditMode && (
           <button
             onClick={copyAll}
             className={`shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
@@ -1339,63 +1361,115 @@ function SrcCabinetPanel({
       </div>
 
       <div className="divide-y divide-gray-100">
-        {rows.map(({ field, label, value, allValues, hint, key }) => (
+        {rows.map(({ field, label, value, hint, key, editable }) => (
           <div key={key} className="flex items-start gap-3 px-4 py-3">
             <span className="shrink-0 w-10 text-xs font-mono font-bold text-gray-400 mt-0.5">{field}</span>
             <span className="w-28 shrink-0 text-xs font-medium text-gray-500 mt-0.5">{label}</span>
-            {value ? (
+
+            {editable && ipEditMode ? (
+              <div className="flex-1 min-w-0 flex flex-col gap-1.5">
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={ipInput}
+                    onChange={(e) => { setIpInput(e.target.value); setIpError(null); }}
+                    placeholder="e.g. 159.89.213.138"
+                    className="flex-1 px-2.5 py-1 text-xs font-mono border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    autoFocus
+                    onKeyDown={(e) => { if (e.key === "Enter") saveIpEdit(); if (e.key === "Escape") setIpEditMode(false); }}
+                  />
+                  <button
+                    onClick={saveIpEdit}
+                    disabled={ipSaving}
+                    className="px-2.5 py-1 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {ipSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    onClick={() => setIpEditMode(false)}
+                    className="px-2.5 py-1 text-xs font-semibold bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+                {ipError && <span className="text-[11px] text-red-600">{ipError}</span>}
+                <span className="text-[10px] text-gray-400">
+                  Enter your server&apos;s actual public IP. DNS auto-detection may return CDN IPs.
+                </span>
+              </div>
+            ) : value ? (
               <>
                 <div className="flex-1 min-w-0">
-                  {allValues ? (
-                    allValues.map((ip, i) => (
-                      <div key={ip} className="flex items-center gap-1.5">
-                        <code className="text-xs font-mono text-gray-800">{ip}</code>
-                        {i === 0 && <span className="text-[10px] font-semibold text-blue-500 uppercase tracking-wide">primary</span>}
-                      </div>
-                    ))
-                  ) : (
-                    <code className="block text-xs font-mono text-gray-800 truncate">{value}</code>
-                  )}
+                  <code className="block text-xs font-mono text-gray-800 truncate">{value}</code>
                   {hint && <span className="text-[10px] text-gray-400 mt-0.5 block">{hint}</span>}
                 </div>
-                <button
-                  onClick={() => copy(value, key)}
-                  className={`shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
-                    copied === key
-                      ? "bg-emerald-100 text-emerald-700"
-                      : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-                  }`}
-                >
-                  {copied === key ? "Copied" : "Copy"}
-                </button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {editable && (
+                    <button
+                      onClick={startIpEdit}
+                      className="px-2 py-1 rounded-lg text-xs text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-all"
+                      title="Edit IP address"
+                    >
+                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125" />
+                      </svg>
+                    </button>
+                  )}
+                  <button
+                    onClick={() => copy(value, key)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      copied === key
+                        ? "bg-emerald-100 text-emerald-700"
+                        : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                    }`}
+                  >
+                    {copied === key ? "Copied" : "Copy"}
+                  </button>
+                </div>
               </>
             ) : (
-              <span className="flex-1 text-xs text-gray-400 italic mt-0.5">Not set</span>
+              <div className="flex-1 flex items-center gap-2">
+                <span className="text-xs text-gray-400 italic">Not set</span>
+                {editable && (
+                  <button
+                    onClick={startIpEdit}
+                    className="text-xs text-blue-600 hover:underline font-medium"
+                  >
+                    Set manually
+                  </button>
+                )}
+              </div>
             )}
           </div>
         ))}
       </div>
 
-      {outboundIp === null && (
+      {displayIp === null && !ipEditMode && (
         <div className="px-4 py-3 bg-amber-50 border-t border-amber-200 flex items-start gap-2 text-xs text-amber-800">
           <svg className="w-3.5 h-3.5 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
             <path fillRule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495zM10 5a.75.75 0 01.75.75v3.5a.75.75 0 01-1.5 0v-3.5A.75.75 0 0110 5zm0 9a1 1 0 100-2 1 1 0 000 2z" clipRule="evenodd" />
           </svg>
           {websiteUrl ? (
             <span>
-              <strong>Could not resolve IP for {(() => { try { return new URL(websiteUrl).hostname; } catch { return websiteUrl; } })()}.</strong>{" "}
-              Check that the Website URL is reachable and has a public DNS A record, then refresh this page.
+              <strong>Could not resolve IP for {hostname ?? websiteUrl}.</strong>{" "}
+              <button onClick={startIpEdit} className="underline font-semibold">Enter it manually</button> or check that the domain has a public DNS A record.
             </span>
           ) : (
             <span>
               <strong>IP address not resolved.</strong>{" "}
               {onGoToStep1 ? (
-                <>Enter a <button onClick={onGoToStep1} className="underline font-semibold">Website URL in step 1</button> — the IP will be resolved automatically from its hostname.</>
+                <>Enter a <button onClick={onGoToStep1} className="underline font-semibold">Website URL in step 1</button>, or <button onClick={startIpEdit} className="underline font-semibold">set the IP manually</button>.</>
               ) : (
                 "Enter a Website URL in step 1 — the IP will be resolved automatically from its hostname."
               )}
             </span>
           )}
+        </div>
+      )}
+
+      {displayIp !== null && !ipEditMode && hostname && (
+        <div className="px-4 py-3 bg-gray-50 border-t border-gray-100 text-[11px] text-gray-500">
+          IP auto-detected via DNS. If your domain uses a CDN (Cloudflare, etc.), the resolved IP may differ from your actual server IP — use the edit button to correct it.
         </div>
       )}
 

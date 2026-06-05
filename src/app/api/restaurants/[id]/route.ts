@@ -37,7 +37,7 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     await requireRestaurantAccess(req, id);
 
     const body = await req.json();
-    const { name, tin, crn, address, logoUrl, isActive, srcOnboardingStep, platformName, websiteUrl } = body;
+    const { name, tin, crn, address, logoUrl, isActive, srcOnboardingStep, platformName, websiteUrl, srcIpAddress } = body;
 
     if (tin !== undefined && !isValidTin(tin)) {
       return NextResponse.json({ error: "tin must be an 8-digit number" }, { status: 400 });
@@ -51,6 +51,9 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
     }
     if (websiteUrl !== undefined && websiteUrl !== null && websiteUrl !== "" && !/^https:\/\/.+/.test(String(websiteUrl))) {
       return NextResponse.json({ error: "websiteUrl must start with https://" }, { status: 400 });
+    }
+    if (srcIpAddress !== undefined && srcIpAddress !== null && srcIpAddress !== "" && !/^\d{1,3}(\.\d{1,3}){3}$/.test(String(srcIpAddress).trim())) {
+      return NextResponse.json({ error: "srcIpAddress must be a valid IPv4 address" }, { status: 400 });
     }
 
     const restaurant = await prisma.restaurant.update({
@@ -67,6 +70,9 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         ...(websiteUrl !== undefined && {
           websiteUrl: websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim(),
           srcIpAddress: null,  // clear cached DNS resolution; re-resolved on next page load
+        }),
+        ...(srcIpAddress !== undefined && websiteUrl === undefined && {
+          srcIpAddress: srcIpAddress === null || srcIpAddress === "" ? null : String(srcIpAddress).trim(),
         }),
       },
     });
