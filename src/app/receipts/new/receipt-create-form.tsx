@@ -80,9 +80,13 @@ export default function ReceiptCreateForm({ restaurants }: Props) {
     if (!canSubmit) return;
     setSubmitting(true); setSubmitError("");
 
+    const token = localStorage.getItem("admin_token") ?? "";
     const res = await fetch("/api/receipts/manual", {
       method:  "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type":  "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
       body: JSON.stringify({ restaurantId, externalOrderId, paymentMethod, deliveryMethod, customerEmail, customerPhone, items: validItems }),
     });
 

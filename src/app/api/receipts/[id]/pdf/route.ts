@@ -8,7 +8,10 @@ function money(value: unknown) {
 }
 
 function text(value: unknown) {
-  return value ? String(value) : "-";
+  const s = value ? String(value) : "-";
+  // StandardFonts (Helvetica) use WinAnsi which only covers U+0020–U+00FF.
+  // Replace characters outside that range (e.g. Armenian script) with "?".
+  return s.replace(/[^ -ÿ]/g, "?");
 }
 
 function short(value: unknown, max = 32) {
