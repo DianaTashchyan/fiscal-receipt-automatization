@@ -1,10 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
 export default function DeleteRestaurantButton({ id, name }: { id: string; name: string }) {
-  const router = useRouter();
   const [confirming, setConfirming] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -24,9 +22,9 @@ export default function DeleteRestaurantButton({ id, name }: { id: string; name:
       // Keep confirming=true so the error stays visible
       return;
     }
-    // refresh() invalidates the router cache so the list re-fetches fresh data
-    router.push("/admin/restaurants");
-    router.refresh();
+    // Hard navigation bypasses the Next.js router cache entirely,
+    // guaranteeing the list is re-fetched from the server after deletion.
+    window.location.href = "/admin/restaurants";
   }
 
   if (confirming) {
