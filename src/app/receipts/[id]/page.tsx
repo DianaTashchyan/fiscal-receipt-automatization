@@ -101,8 +101,8 @@ export default async function ReceiptDetailsPage({
               <SendEmailButton receiptId={receipt.id} defaultEmail={receipt.customerEmail} />
               <SendSmsButton receiptId={receipt.id} defaultPhone={receipt.customerPhone} />
               <a
-                href={`/api/receipts/${receipt.id}/pdf`}
-                target="_blank"
+                href={`/api/receipts/${receipt.id}/pdf?download=1`}
+                download={`receipt-${receipt.receiptNumber ?? receipt.id}.pdf`}
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 hover:bg-white/25 border border-white/30 text-white rounded-xl text-sm font-semibold transition-colors"
               >
                 <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>

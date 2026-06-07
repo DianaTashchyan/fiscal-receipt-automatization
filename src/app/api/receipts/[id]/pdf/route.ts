@@ -20,10 +20,11 @@ function short(value: unknown, max = 32) {
 }
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const forceDownload = new URL(req.url).searchParams.has("download");
 
   const receipt = await prisma.receipt.findUnique({
     where: { id },
@@ -207,10 +208,15 @@ export async function GET(
 
   const pdfBytes = await pdfDoc.save();
 
+  const filename = `receipt-${receipt.receiptNumber ?? id}.pdf`;
+  const disposition = forceDownload
+    ? `attachment; filename="${filename}"`
+    : `inline; filename="${filename}"`;
+
   return new Response(Buffer.from(pdfBytes), {
     headers: {
       "Content-Type": "application/pdf",
-      "Content-Disposition": `inline; filename=receipt-${id}.pdf`,
+      "Content-Disposition": disposition,
     },
   });
 }
