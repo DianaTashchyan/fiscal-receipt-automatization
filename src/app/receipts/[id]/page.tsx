@@ -44,7 +44,10 @@ export default async function ReceiptDetailsPage({
 
   const isReturn   = receipt.receiptType === "RETURN";
   const isFiscalized = ["FISCALIZED", "PDF_GENERATED", "SENT"].includes(receipt.status);
-  const canReturn  = isFiscalized && !isReturn;
+  const hasSuccessfulReturn = receipt.returnReceipts.some(
+    (r) => ["FISCALIZED", "PDF_GENERATED", "SENT"].includes(r.status)
+  );
+  const canReturn  = isFiscalized && !isReturn && !hasSuccessfulReturn;
 
   const heroBg = isReturn
     ? "linear-gradient(135deg, #7f1d1d 0%, #b91c1c 100%)"
@@ -323,8 +326,42 @@ export default async function ReceiptDetailsPage({
                     Return Receipt
                   </Link>
                 )}
+                {!canReturn && isFiscalized && !isReturn && hasSuccessfulReturn && (
+                  <div className="flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold text-gray-400 bg-gray-100 rounded-xl border border-gray-200 cursor-not-allowed">
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    Already Returned
+                  </div>
+                )}
               </div>
             </div>
+
+            {/* Event log */}
+            {receipt.events.length > 0 && (
+              <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
+                <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
+                  <h2 className="text-sm font-bold text-gray-900">Audit Log</h2>
+                </div>
+                <div className="divide-y divide-gray-50">
+                  {[...receipt.events].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()).map((ev) => (
+                    <div key={ev.id} className="px-5 py-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="text-xs font-semibold text-gray-700 font-mono break-all">{ev.event}</span>
+                        <span className="text-[10px] text-gray-400 shrink-0 mt-0.5">
+                          {new Date(ev.createdAt).toLocaleTimeString()}
+                        </span>
+                      </div>
+                      {(ev.fromStatus || ev.toStatus) && (
+                        <p className="text-[11px] text-gray-400 mt-0.5">
+                          {ev.fromStatus ?? "—"} → {ev.toStatus ?? "—"}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       </div>
