@@ -288,6 +288,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
       websiteUrl: websiteUrlInput.trim() || null,
     });
     if (r.ok) {
+      const saved = r.data as { srcIpAddress?: string | null };
       setRestaurant((prev) => ({
         ...prev,
         tin: tinInput.trim(),
@@ -295,6 +296,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
         address: companyAddress.trim(),
         platformName: platformNameInput.trim() || null,
         websiteUrl: websiteUrlInput.trim() || null,
+        outboundIp: saved.srcIpAddress ?? null,
       }));
       setResult({ ok: true, message: "Company data saved successfully." });
       await advanceDbStep(1);

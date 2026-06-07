@@ -26,7 +26,14 @@ export default async function ReceiptDetailsPage({
 
   const receipt = await prisma.receipt.findUnique({
     where:   { id },
-    include: { restaurant: true, cashier: true, items: true, events: true },
+    include: {
+      restaurant: true,
+      cashier: true,
+      items: true,
+      events: true,
+      originalReceipt: { include: { restaurant: true } },
+      returnReceipts: { orderBy: { createdAt: "asc" } },
+    },
   });
 
   if (!receipt) notFound();
@@ -35,10 +42,18 @@ export default async function ReceiptDetailsPage({
   const qrImage = await QRCode.toDataURL(qrText);
   const date    = new Date(receipt.createdAt);
 
+  const isReturn   = receipt.receiptType === "RETURN";
+  const isFiscalized = ["FISCALIZED", "PDF_GENERATED", "SENT"].includes(receipt.status);
+  const canReturn  = isFiscalized && !isReturn;
+
+  const heroBg = isReturn
+    ? "linear-gradient(135deg, #7f1d1d 0%, #b91c1c 100%)"
+    : statusBg(receipt.status);
+
   return (
     <div className="min-h-screen" style={{ background: "linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)" }}>
       {/* Status hero bar */}
-      <div style={{ background: statusBg(receipt.status) }}>
+      <div style={{ background: heroBg }}>
         <div className="max-w-4xl mx-auto px-6 py-8">
           <Link
             href="/receipts"
@@ -52,16 +67,34 @@ export default async function ReceiptDetailsPage({
 
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-5">
             <div>
-              <div className="flex items-center gap-3 mb-2">
+              <div className="flex items-center gap-2 mb-2">
                 <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-white/20 text-white uppercase tracking-wide border border-white/30">
                   {receipt.status}
                 </span>
+                {isReturn && (
+                  <span className="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-bold bg-red-900/40 text-red-200 border border-red-700/50">
+                    RETURN
+                  </span>
+                )}
               </div>
-              <h1 className="text-2xl font-bold text-white tracking-tight">Receipt Details</h1>
+              <h1 className="text-2xl font-bold text-white tracking-tight">
+                {isReturn ? "Return Receipt" : "Receipt Details"}
+              </h1>
               <p className="text-white/60 text-sm mt-1 font-mono">{receipt.externalOrderId}</p>
             </div>
 
             <div className="flex flex-wrap gap-2">
+              {canReturn && (
+                <Link
+                  href={`/receipts/${receipt.id}/return`}
+                  className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-red-600/80 hover:bg-red-600 border border-red-400/50 text-white rounded-xl text-sm font-semibold transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                  Return Receipt
+                </Link>
+              )}
               <SendEmailButton receiptId={receipt.id} defaultEmail={receipt.customerEmail} />
               <SendSmsButton receiptId={receipt.id} defaultPhone={receipt.customerPhone} />
               <a
@@ -98,6 +131,67 @@ export default async function ReceiptDetailsPage({
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left column — details */}
           <div className="lg:col-span-2 space-y-5">
+
+            {/* Link to original receipt (for return receipts) */}
+            {isReturn && receipt.originalReceipt && (
+              <div className="bg-red-50 border border-red-200 rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-5 py-4 border-b border-red-100 bg-red-100/50">
+                  <h2 className="text-sm font-bold text-red-900">Original Receipt</h2>
+                </div>
+                <div className="px-5 py-4 flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">{receipt.originalReceipt.restaurant?.name ?? "—"}</p>
+                    <p className="text-xs text-gray-500 font-mono mt-0.5">{receipt.originalReceipt.fiscalNumber ?? receipt.originalReceipt.externalOrderId}</p>
+                  </div>
+                  <Link
+                    href={`/receipts/${receipt.originalReceipt.id}`}
+                    className="text-sm font-semibold text-red-700 hover:underline flex items-center gap-1"
+                  >
+                    View
+                    <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.5}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                  </Link>
+                </div>
+              </div>
+            )}
+
+            {/* Return receipts (for original receipts) */}
+            {!isReturn && receipt.returnReceipts.length > 0 && (
+              <div className="bg-orange-50 border border-orange-200 rounded-2xl overflow-hidden shadow-sm">
+                <div className="px-5 py-4 border-b border-orange-100 bg-orange-100/50">
+                  <h2 className="text-sm font-bold text-orange-900">
+                    Return Receipts ({receipt.returnReceipts.length})
+                  </h2>
+                </div>
+                <div className="divide-y divide-orange-100">
+                  {receipt.returnReceipts.map((ret) => (
+                    <div key={ret.id} className="px-5 py-4 flex items-center justify-between">
+                      <div>
+                        <p className="text-xs font-mono text-gray-500">{ret.fiscalNumber ?? ret.externalOrderId}</p>
+                        <p className="text-sm font-semibold text-gray-900 mt-0.5">
+                          {Number(ret.totalAmount).toLocaleString()} ֏ refund
+                        </p>
+                        <p className="text-xs text-gray-400 mt-0.5">{new Date(ret.createdAt).toLocaleString()}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                          ret.status === "FISCALIZED" ? "bg-emerald-100 text-emerald-700 border-emerald-200" :
+                          ret.status === "FAILED" ? "bg-red-100 text-red-700 border-red-200" :
+                          "bg-amber-100 text-amber-700 border-amber-200"
+                        }`}>
+                          {ret.status}
+                        </span>
+                        <Link href={`/receipts/${ret.id}`} className="text-sm font-semibold text-orange-700 hover:underline">
+                          View
+                        </Link>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* General */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
@@ -146,7 +240,9 @@ export default async function ReceiptDetailsPage({
             {/* Items */}
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
-                <h2 className="text-sm font-bold text-gray-900">Items</h2>
+                <h2 className="text-sm font-bold text-gray-900">
+                  {isReturn ? "Returned Items" : "Items"}
+                </h2>
               </div>
               <table className="w-full">
                 <thead>
@@ -171,17 +267,20 @@ export default async function ReceiptDetailsPage({
                 <div className="flex justify-between text-sm text-gray-500">
                   <span>Bill</span><span className="font-semibold">{Number(receipt.billAmount).toLocaleString()} ֏</span>
                 </div>
-                <div className="flex justify-between text-sm text-gray-500">
-                  <span>Tip</span><span className="font-semibold">{Number(receipt.tipAmount).toLocaleString()} ֏</span>
-                </div>
-                <div className="flex justify-between text-base font-bold text-gray-900 pt-2 border-t border-gray-200">
-                  <span>Total</span><span>{Number(receipt.totalAmount).toLocaleString()} ֏</span>
+                {!isReturn && (
+                  <div className="flex justify-between text-sm text-gray-500">
+                    <span>Tip</span><span className="font-semibold">{Number(receipt.tipAmount).toLocaleString()} ֏</span>
+                  </div>
+                )}
+                <div className={`flex justify-between text-base font-bold pt-2 border-t border-gray-200 ${isReturn ? "text-red-700" : "text-gray-900"}`}>
+                  <span>{isReturn ? "Refund Total" : "Total"}</span>
+                  <span>{Number(receipt.totalAmount).toLocaleString()} ֏</span>
                 </div>
               </div>
             </div>
           </div>
 
-          {/* Right column — QR */}
+          {/* Right column — QR + actions */}
           <div className="space-y-5">
             <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden">
               <div className="px-5 py-4 border-b border-gray-100 bg-gray-50/50">
@@ -211,6 +310,19 @@ export default async function ReceiptDetailsPage({
                   </svg>
                   Open PDF
                 </a>
+
+                {canReturn && (
+                  <Link
+                    href={`/receipts/${receipt.id}/return`}
+                    className="flex items-center justify-center gap-2 w-full py-2.5 text-sm font-semibold text-white rounded-xl hover:opacity-90 transition-opacity"
+                    style={{ background: "linear-gradient(135deg, #dc2626, #b91c1c)" }}
+                  >
+                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                    </svg>
+                    Return Receipt
+                  </Link>
+                )}
               </div>
             </div>
           </div>

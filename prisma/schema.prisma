@@ -33,6 +33,11 @@ enum ReceiptStatus {
   FAILED
 }
 
+enum ReceiptType {
+  SALE
+  RETURN
+}
+
 enum DeliveryMethod {
   EMAIL
   SMS
@@ -203,6 +208,13 @@ model Receipt {
   sentAt          DateTime?
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
+
+  // ---- Return receipt fields ----
+  receiptType        ReceiptType  @default(SALE)
+  originalReceiptId  String?
+  originalReceipt    Receipt?     @relation("ReceiptReturns", fields: [originalReceiptId], references: [id])
+  returnReceipts     Receipt[]    @relation("ReceiptReturns")
+
   restaurant      Restaurant     @relation(fields: [restaurantId], references: [id])
   cashier         Cashier?       @relation(fields: [cashierId], references: [id])
   items           ReceiptItem[]
@@ -211,6 +223,7 @@ model Receipt {
   @@unique([restaurantId, externalOrderId])
   @@index([status])
   @@index([restaurantId, createdAt])
+  @@index([originalReceiptId])
 }
 
 model ReceiptItem {

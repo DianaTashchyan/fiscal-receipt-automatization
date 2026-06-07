@@ -59,11 +59,14 @@ export async function GET(
   const createdDate = new Date(receipt.createdAt);
   let y = pageHeight - 35;
 
+  // Sanitize before drawing — Helvetica uses WinAnsi (U+0020–U+00FF only).
+  // Calling text() inside row/center means callers don't have to remember.
   const center = (value: string, size = 9, bold = false) => {
     const usedFont = bold ? boldFont : font;
-    const width = usedFont.widthOfTextAtSize(value, size);
+    const safe = text(value);
+    const width = usedFont.widthOfTextAtSize(safe, size);
 
-    page.drawText(value, {
+    page.drawText(safe, {
       x: (pageWidth - width) / 2,
       y,
       size,
@@ -87,17 +90,19 @@ export async function GET(
 
   const row = (left: string, right: string, size = 8.2, bold = false) => {
     const usedFont = bold ? boldFont : font;
+    const safeLeft  = text(left);
+    const safeRight = text(right);
 
-    page.drawText(left, {
+    page.drawText(safeLeft, {
       x: 18,
       y,
       size,
       font: usedFont,
     });
 
-    const rightWidth = usedFont.widthOfTextAtSize(right, size);
+    const rightWidth = usedFont.widthOfTextAtSize(safeRight, size);
 
-    page.drawText(right, {
+    page.drawText(safeRight, {
       x: pageWidth - 18 - rightWidth,
       y,
       size,
@@ -161,8 +166,10 @@ export async function GET(
 
   line();
 
-  row("Cash Amount", receipt.paymentMethod === "CASH" ? money(receipt.totalAmount) : money(0), 9);
-  row("Card Amount", receipt.paymentMethod !== "CASH" ? money(receipt.totalAmount) : money(0), 9);
+  const paidCash = Number(receipt.paidCashAmount ?? (receipt.paymentMethod === "CASH" ? receipt.totalAmount : 0));
+  const paidCard = Number(receipt.paidCardAmount ?? (receipt.paymentMethod !== "CASH" ? receipt.totalAmount : 0));
+  row("Cash Amount", money(paidCash), 9);
+  row("Card Amount", money(paidCard), 9);
   row("Partial Amount", money(0), 9);
   row("Prepayment Used", money(0), 9);
 

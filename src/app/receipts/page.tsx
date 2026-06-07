@@ -18,11 +18,13 @@ function statusBadge(status: string) {
 export default async function ReceiptsPage() {
   const receipts = await prisma.receipt.findMany({
     include: { restaurant: true },
-    orderBy:  { createdAt: "desc" },
+    orderBy: { createdAt: "desc" },
   });
 
-  const totalRevenue = receipts.reduce((sum, r) => sum + Number(r.totalAmount), 0);
-  const fiscalized   = receipts.filter((r) => r.status === "FISCALIZED").length;
+  const sales      = receipts.filter((r) => r.receiptType === "SALE");
+  const returns    = receipts.filter((r) => r.receiptType === "RETURN");
+  const totalRevenue = sales.reduce((sum, r) => sum + Number(r.totalAmount), 0);
+  const fiscalized   = sales.filter((r) => r.status === "FISCALIZED" || r.status === "PDF_GENERATED" || r.status === "SENT").length;
   const failed       = receipts.filter((r) => r.status === "FAILED").length;
   const pending      = receipts.filter((r) => r.status === "PENDING" || r.status === "FISCALIZING").length;
 
@@ -50,12 +52,13 @@ export default async function ReceiptsPage() {
           </div>
 
           {/* Stats row in hero */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-6">
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-6">
             {[
-              { label: "Total",       value: receipts.length,               color: "text-white" },
-              { label: "Fiscalized",  value: fiscalized,                     color: "text-emerald-400" },
-              { label: "Pending",     value: pending,                        color: "text-amber-400" },
-              { label: "Revenue",     value: `${totalRevenue.toLocaleString()} ֏`, color: "text-indigo-300" },
+              { label: "Total",      value: receipts.length,                    color: "text-white" },
+              { label: "Fiscalized", value: fiscalized,                          color: "text-emerald-400" },
+              { label: "Pending",    value: pending,                             color: "text-amber-400" },
+              { label: "Returns",    value: returns.length,                      color: "text-red-400" },
+              { label: "Revenue",    value: `${totalRevenue.toLocaleString()} ֏`, color: "text-indigo-300" },
             ].map((s) => (
               <div key={s.label} className="bg-white/5 border border-white/10 rounded-xl px-4 py-3">
                 <p className="text-xs text-slate-500 uppercase tracking-wide">{s.label}</p>
@@ -93,48 +96,74 @@ export default async function ReceiptsPage() {
               )}
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full min-w-[860px]">
+              <table className="w-full min-w-[900px]">
                 <thead>
                   <tr className="bg-gray-50/50">
-                    {["Order ID", "Restaurant", "Amount", "Status", "Delivery", "Fiscal #", "Date", "Actions"].map((h) => (
+                    {["Order ID", "Restaurant", "Type", "Amount", "Status", "Delivery", "Fiscal #", "Date", "Actions"].map((h) => (
                       <th key={h} className="px-5 py-3 text-left text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-gray-100">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-50">
-                  {receipts.map((r) => (
-                    <tr key={r.id} className="hover:bg-indigo-50/30 transition-colors">
-                      <td className="px-5 py-4">
-                        <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded-md">{r.externalOrderId}</code>
-                      </td>
-                      <td className="px-5 py-4 text-sm font-semibold text-gray-900">{r.restaurant.name}</td>
-                      <td className="px-5 py-4 text-sm font-bold text-gray-900">{Number(r.totalAmount).toLocaleString()} ֏</td>
-                      <td className="px-5 py-4">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusBadge(r.status)}`}>
-                          {r.status}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-sm text-gray-500">
-                        {r.sentAt ? `${r.deliveryMethod} ✓` : (r.deliveryMethod ?? "—")}
-                      </td>
-                      <td className="px-5 py-4">
-                        {r.fiscalNumber
-                          ? <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded-md">{r.fiscalNumber}</code>
-                          : <span className="text-gray-300">—</span>
-                        }
-                      </td>
-                      <td className="px-5 py-4 text-xs text-gray-400">
-                        {new Date(r.createdAt).toLocaleDateString()}
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex items-center gap-2">
-                          <Link href={`/receipts/${r.id}`} className="text-xs font-semibold text-indigo-600 hover:underline">Open</Link>
-                          <span className="text-gray-200">·</span>
-                          <a href={`/api/receipts/${r.id}/pdf`} download className="text-xs font-semibold text-gray-500 hover:text-indigo-600">PDF</a>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                  {receipts.map((r) => {
+                    const isReturn = r.receiptType === "RETURN";
+                    return (
+                      <tr key={r.id} className={`hover:bg-indigo-50/30 transition-colors ${isReturn ? "bg-red-50/20" : ""}`}>
+                        <td className="px-5 py-4">
+                          <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded-md">{r.externalOrderId}</code>
+                        </td>
+                        <td className="px-5 py-4 text-sm font-semibold text-gray-900">{r.restaurant.name}</td>
+                        <td className="px-5 py-4">
+                          {isReturn ? (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-red-100 text-red-700 border border-red-200">
+                              RETURN
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-gray-100 text-gray-500 border border-gray-200">
+                              SALE
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4 text-sm font-bold text-gray-900">
+                          {isReturn ? (
+                            <span className="text-red-700">-{Number(r.totalAmount).toLocaleString()} ֏</span>
+                          ) : (
+                            <span>{Number(r.totalAmount).toLocaleString()} ֏</span>
+                          )}
+                        </td>
+                        <td className="px-5 py-4">
+                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-bold border ${statusBadge(r.status)}`}>
+                            {r.status}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-sm text-gray-500">
+                          {r.sentAt ? `${r.deliveryMethod} ✓` : (r.deliveryMethod ?? "—")}
+                        </td>
+                        <td className="px-5 py-4">
+                          {r.fiscalNumber
+                            ? <code className="text-xs font-mono text-gray-600 bg-gray-100 px-2 py-1 rounded-md">{r.fiscalNumber}</code>
+                            : <span className="text-gray-300">—</span>
+                          }
+                        </td>
+                        <td className="px-5 py-4 text-xs text-gray-400">
+                          {new Date(r.createdAt).toLocaleDateString()}
+                        </td>
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-2">
+                            <Link href={`/receipts/${r.id}`} className="text-xs font-semibold text-indigo-600 hover:underline">Open</Link>
+                            <span className="text-gray-200">·</span>
+                            <a href={`/api/receipts/${r.id}/pdf`} download className="text-xs font-semibold text-gray-500 hover:text-indigo-600">PDF</a>
+                            {!isReturn && (r.status === "FISCALIZED" || r.status === "PDF_GENERATED" || r.status === "SENT") && (
+                              <>
+                                <span className="text-gray-200">·</span>
+                                <Link href={`/receipts/${r.id}/return`} className="text-xs font-semibold text-red-500 hover:text-red-700">Return</Link>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

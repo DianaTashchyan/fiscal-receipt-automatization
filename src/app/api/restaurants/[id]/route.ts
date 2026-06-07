@@ -1,8 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { promises as dns } from "dns";
 import prisma from "@/lib/prisma/client";
 import { requireAuth, requireRestaurantAccess } from "@/lib/utils/auth";
 import { isValidTin } from "@/lib/src/validation";
 import { UserRole } from "@prisma/client";
+
+async function resolveWebsiteIp(websiteUrl: string): Promise<string | null> {
+  try {
+    const hostname = new URL(websiteUrl).hostname;
+    console.log(`[DNS] Resolving A records for hostname: ${hostname}`);
+    const addresses = await dns.resolve4(hostname);
+    console.log(`[DNS] Resolved IPs for ${hostname}: ${addresses.join(", ")}`);
+    const saved = addresses[0] ?? null;
+    if (saved) console.log(`[DNS] Saving srcIpAddress=${saved}`);
+    return saved ?? null;
+  } catch (err) {
+    console.log(`[DNS] Resolution failed for ${websiteUrl}: ${err instanceof Error ? err.message : err}`);
+    return null;
+  }
+}
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -56,6 +72,15 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "srcIpAddress must be a valid IPv4 address" }, { status: 400 });
     }
 
+    // Resolve DNS when websiteUrl is being set to a non-empty value.
+    // newUrl=null (clearing the URL) → resolvedIp=null (clear stored IP).
+    // websiteUrl not in body → resolvedIp undefined → srcIpAddress not touched.
+    const newUrl = websiteUrl !== undefined
+      ? (websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim())
+      : undefined;
+    const resolvedIp: string | null | undefined =
+      newUrl !== undefined ? (newUrl ? await resolveWebsiteIp(newUrl) : null) : undefined;
+
     const restaurant = await prisma.restaurant.update({
       where: { id },
       data: {
@@ -67,9 +92,9 @@ export async function PATCH(req: NextRequest, { params }: RouteContext) {
         ...(isActive !== undefined && { isActive: Boolean(isActive) }),
         ...(srcOnboardingStep !== undefined && { srcOnboardingStep: Number(srcOnboardingStep) }),
         ...(platformName !== undefined && { platformName: platformName === null || platformName === "" ? null : String(platformName).trim() }),
-        ...(websiteUrl !== undefined && {
-          websiteUrl: websiteUrl === null || websiteUrl === "" ? null : String(websiteUrl).trim(),
-          srcIpAddress: null,  // clear cached DNS resolution; re-resolved on next page load
+        ...(newUrl !== undefined && {
+          websiteUrl: newUrl,
+          srcIpAddress: resolvedIp ?? null,
         }),
         ...(srcIpAddress !== undefined && websiteUrl === undefined && {
           srcIpAddress: srcIpAddress === null || srcIpAddress === "" ? null : String(srcIpAddress).trim(),
