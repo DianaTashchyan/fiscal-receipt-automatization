@@ -54,12 +54,23 @@ export default function ReturnReceiptForm({ receiptId, receiptFiscalNumber, rece
   const [cardRefund, setCardRefund]       = useState("0");
 
   useEffect(() => {
-    const token = localStorage.getItem("admin_token") ?? "";
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      router.replace("/admin/login");
+      return;
+    }
     fetch(`/api/receipts/${receiptId}/return-info`, {
       headers: { Authorization: `Bearer ${token}` },
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (r.status === 401) {
+          router.replace("/admin/login");
+          return null;
+        }
+        return r.json();
+      })
       .then((data) => {
+        if (!data) return;
         if (!data.success) {
           setLoadError(data.error ?? "Failed to load return info");
           return;
@@ -80,9 +91,9 @@ export default function ReturnReceiptForm({ receiptId, receiptFiscalNumber, rece
         setCashRefund(String(payment.paidCashAmount));
         setCardRefund(String(payment.paidCardAmount));
       })
-      .catch((err) => setLoadError(err.message ?? "Network error"))
+      .catch((err) => setLoadError(err instanceof Error ? err.message : "Network error"))
       .finally(() => setLoading(false));
-  }, [receiptId]);
+  }, [receiptId, router]);
 
   // Compute total return amount from selected items
   const selectedItems = srcItems.filter((item) => {
@@ -136,7 +147,11 @@ export default function ReturnReceiptForm({ receiptId, receiptFiscalNumber, rece
     }
 
     setSubmitting(true);
-    const token = localStorage.getItem("admin_token") ?? "";
+    const token = localStorage.getItem("admin_token");
+    if (!token) {
+      router.replace("/admin/login");
+      return;
+    }
 
     const payload = {
       items: selectedItems.map((item) => ({
@@ -160,9 +175,14 @@ export default function ReturnReceiptForm({ receiptId, receiptFiscalNumber, rece
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
       setSubmitting(false);
 
+      if (res.status === 401) {
+        router.replace("/admin/login");
+        return;
+      }
+
+      const data = await res.json();
       if (!res.ok) {
         setSubmitError(data.error ?? "Failed to create return receipt");
         return;
