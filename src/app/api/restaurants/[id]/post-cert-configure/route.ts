@@ -114,6 +114,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
         srcCertData: true,
         srcCertPassword: true,
         srcCertPath: true,
+        srcPrivateKeyEnc: true,
         srcOnboardingStep: true,
         departments: { where: { isActive: true }, take: 1, select: { id: true, name: true, taxDepartmentId: true, taxRegime: true } },
         cashiers:    { where: { isActive: true }, take: 1, select: { id: true, name: true, taxCashierId: true } },
@@ -228,6 +229,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
           srcCertData: restaurant.srcCertData,
           srcCertPassword: restaurant.srcCertPassword,
           srcCertPath: restaurant.srcCertPath,
+          srcPrivateKeyEnc: restaurant.srcPrivateKeyEnc,
         });
         const { RealSrcClient } = await import("@/lib/src/real-client");
         client = new RealSrcClient(certConfig);

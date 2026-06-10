@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: { id: true, name: true, tin: true, crn: true, isActive: true, srcCertData: true, srcCertPassword: true, srcCertPath: true },
+      select: { id: true, name: true, tin: true, crn: true, isActive: true, srcCertData: true, srcCertPassword: true, srcCertPath: true, srcPrivateKeyEnc: true },
     });
     if (!restaurant) {
       return NextResponse.json({ error: "Restaurant not found" }, { status: 404 });

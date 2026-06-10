@@ -24,6 +24,7 @@ export async function POST(
             srcCertData: true,
             srcCertPassword: true,
             srcCertPath: true,
+            srcPrivateKeyEnc: true,
           },
         },
       },

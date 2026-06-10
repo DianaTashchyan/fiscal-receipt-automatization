@@ -39,13 +39,13 @@ export async function resolveAdminSrcClient(
         srcCertData: true,
         srcCertPassword: true,
         srcCertPath: true,
+        srcPrivateKeyEnc: true,
       },
     });
 
     if (
       restaurant &&
-      (restaurant.srcCertData || restaurant.srcCertPath) &&
-      restaurant.srcCertPassword
+      (restaurant.srcCertData || restaurant.srcCertPath)
     ) {
       const certConfig = resolveRestaurantCertConfig(restaurant);
       return getRestaurantSrcClient(restaurant.id, certConfig);

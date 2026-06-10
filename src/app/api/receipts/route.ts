@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
             srcCertData: true,
             srcCertPassword: true,
             srcCertPath: true,
+            srcPrivateKeyEnc: true,
           },
         },
       },
