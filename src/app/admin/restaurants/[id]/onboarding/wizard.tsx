@@ -308,15 +308,23 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 
   // ── Step 2: CSR ─────────────────────────────────────────────────────────────
   const [csrPem, setCsrPem] = useState<string | null>(null);
+  const [confirmRegen, setConfirmRegen] = useState(false);
 
-  async function doGenerateCsr() {
+  async function doGenerateCsr(force = false) {
     setLoading(true); setResult(null);
-    const r = await callApi(`/api/restaurants/${restaurant.id}/generate-csr`, "POST");
+    const r = await callApi(
+      `/api/restaurants/${restaurant.id}/generate-csr`,
+      "POST",
+      force ? { force: true } : undefined
+    );
     if (r.ok) {
       setCsrPem(r.data.csrPem as string);
+      setConfirmRegen(false);
       setRestaurant((prev) => ({ ...prev, hasCsr: true }));
       setResult({ ok: true, message: "CSR generated. Download it before continuing." });
       await advanceDbStep(2);
+    } else if ((r.data as Record<string, unknown>)?.requiresForce) {
+      setConfirmRegen(true);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to generate CSR" });
     }
@@ -690,8 +698,33 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
 
               <ResultBanner result={result} />
 
+              {confirmRegen && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3">
+                  <p className="text-sm font-semibold text-amber-800">Confirm CSR Regeneration</p>
+                  <p className="text-sm text-amber-700">
+                    This will create a new private key.{restaurant.hasCert && " The certificate currently on file will stop working immediately."}{" "}
+                    Any previously issued SRC certificate — including one obtained through VCR.am or another provider — cannot be reused after regeneration. You must submit the new CSR to SRC and wait for a new signed .crt.
+                  </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => doGenerateCsr(true)}
+                      disabled={loading}
+                      className="px-4 py-2 bg-red-600 text-white text-sm font-semibold rounded-lg hover:bg-red-700 disabled:opacity-50"
+                    >
+                      Yes, generate new CSR
+                    </button>
+                    <button
+                      onClick={() => setConfirmRegen(false)}
+                      className="px-4 py-2 bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg hover:bg-gray-200"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2">
-                <PrimaryButton onClick={doGenerateCsr} loading={loading} label={restaurant.hasCsr ? "Regenerate CSR" : "Generate CSR"} />
+                <PrimaryButton onClick={() => doGenerateCsr()} loading={loading} label={restaurant.hasCsr ? "Regenerate CSR" : "Generate CSR"} />
                 {(csrPem || restaurant.hasCsr) && (
                   <SecondaryButton
                     onClick={csrPem ? downloadCsr : downloadCsrFromServer}
