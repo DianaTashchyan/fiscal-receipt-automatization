@@ -115,6 +115,7 @@ export async function GET(req: NextRequest, { params }: RouteContext) {
     } else {
       try {
         const csr = forge.pki.certificationRequestFromPem(restaurant.srcCsrPem);
+        if (!csr.publicKey) throw new Error("CSR contains no public key");
         csrFingerprint = spkiFingerprint(csr.publicKey);
       } catch (e) {
         report.csrError = `CSR parse failed: ${(e as Error).message}`;
