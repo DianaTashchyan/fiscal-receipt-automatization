@@ -323,7 +323,7 @@ export default function OnboardingWizard({ restaurant: initial }: { restaurant: 
       setRestaurant((prev) => ({ ...prev, hasCsr: true }));
       setResult({ ok: true, message: "CSR generated. Download it before continuing." });
       await advanceDbStep(2);
-    } else if ((r.data as Record<string, unknown>)?.requiresForce) {
+    } else if (r.status === 409) {
       setConfirmRegen(true);
     } else {
       setResult({ ok: false, message: (r.data.error as string) ?? "Failed to generate CSR" });
