@@ -14,21 +14,17 @@
 //   If a filename matching this pattern is provided, the CRN is extracted and stored
 //   in the restaurant record so post-cert-configure does not need to parse the cert body.
 
-import tls from "tls";
-import crypto from "crypto";
+import https from "https";
 import forge from "node-forge";
+import { randomBytes } from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
 import { requireRestaurantAccess } from "@/lib/utils/auth";
 import { decryptPrivateKey } from "@/lib/src/csr";
+import { encryptCertPassword } from "@/lib/src/cert-crypto";
 import { invalidateRestaurantSrcClient } from "@/lib/src/client";
 
 type RouteContext = { params: Promise<{ id: string }> };
-
-function spkiFingerprint(publicKey: forge.pki.PublicKey): string {
-  const der = forge.asn1.toDer(forge.pki.publicKeyToAsn1(publicKey as forge.pki.rsa.PublicKey)).getBytes();
-  return crypto.createHash("sha256").update(Buffer.from(der, "binary")).digest("hex");
-}
 
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
@@ -37,7 +33,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id },
-      select: { id: true, tin: true, srcPrivateKeyEnc: true, srcCsrPem: true },
+      select: { id: true, tin: true, srcPrivateKeyEnc: true },
     });
 
     if (!restaurant) {
@@ -56,6 +52,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     if (!crtBase64 || typeof crtBase64 !== "string") {
       return NextResponse.json({ error: "crtBase64 is required" }, { status: 400 });
     }
+
+    // Generate a secure random password server-side; caller never needs to know it.
+    const p12Password = randomBytes(32).toString("hex");
 
     // Decode the .crt
     let crtPem: string;
@@ -77,60 +76,40 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // Parse .crt and validate it pairs with the stored private key.
-    // Store cert PEM directly — no PKCS#12. node-forge's toPkcs12Asn1 hardcodes
-    // SHA-1 for the outer MAC; OpenSSL 3.5+ at security level 2 rejects any use
-    // of SHA-1, causing "Unable to load certificate from PFX data" on Vercel.
-    let certPem: string;
-    let certFingerprint: string;
-    let privKeyFingerprint: string;
+    // Parse the .crt and private key, build PKCS#12
+    let pfxDer: string;
     try {
       const cert = forge.pki.certificateFromPem(crtPem);
-      const privKey = forge.pki.privateKeyFromPem(privateKeyPem) as forge.pki.rsa.PrivateKey;
-      certPem = forge.pki.certificateToPem(cert); // re-encode to normalise
-      certFingerprint = spkiFingerprint(cert.publicKey);
-      privKeyFingerprint = spkiFingerprint(forge.pki.rsa.setPublicKey(privKey.n, privKey.e));
+      const privateKey = forge.pki.privateKeyFromPem(privateKeyPem);
+      const p12 = forge.pkcs12.toPkcs12Asn1(privateKey, [cert], p12Password, {
+        algorithm: "aes256",
+        friendlyName: restaurant.tin,
+      });
+      pfxDer = forge.asn1.toDer(p12).getBytes();
     } catch (e) {
       return NextResponse.json(
-        { error: `Failed to parse .crt: ${(e as Error).message}. Ensure the .crt was signed for the CSR generated in step 2.` },
+        { error: `Failed to convert .crt to .p12: ${(e as Error).message}. Ensure the .crt was signed for the CSR generated in step 2.` },
         { status: 422 }
       );
     }
 
-    // Compute CSR fingerprint for diagnostics (srcCsrPem may be null if not yet generated)
-    let csrFingerprint: string | null = null;
-    if (restaurant.srcCsrPem) {
-      try {
-        const csr = forge.pki.certificationRequestFromPem(restaurant.srcCsrPem);
-        if (csr.publicKey) csrFingerprint = spkiFingerprint(csr.publicKey);
-      } catch { /* non-fatal */ }
-    }
+    const pfxBuffer = Buffer.from(pfxDer, "binary");
 
-    const certPemBuffer = Buffer.from(certPem, "utf8");
-
-    // tls.createSecureContext throws immediately if cert+key don't match
+    // Validate the resulting .p12 by building an https.Agent
     try {
-      tls.createSecureContext({
-        cert: certPemBuffer,
-        key: Buffer.from(privateKeyPem, "utf8"),
+      new https.Agent({
+        pfx: pfxBuffer,
+        passphrase: p12Password,
+        rejectUnauthorized: false,
       });
     } catch (e) {
       return NextResponse.json(
-        {
-          error: `Certificate/key validation failed: ${(e as Error).message}`,
-          fingerprints: {
-            CERT:        certFingerprint,
-            CSR:         csrFingerprint ?? "unavailable (srcCsrPem is null)",
-            PRIVATE_KEY: privKeyFingerprint,
-          },
-          matches: {
-            "CERT == CSR":         csrFingerprint !== null && certFingerprint === csrFingerprint,
-            "CERT == PRIVATE_KEY": certFingerprint === privKeyFingerprint,
-          },
-        },
+        { error: `Generated .p12 validation failed: ${(e as Error).message}` },
         { status: 422 }
       );
     }
+
+    const encryptedPassword = encryptCertPassword(p12Password);
 
     // Extract CRN from filename: SRC names the signed cert "{TIN}_{CRN}.crt"
     // (documented in VCR guide: vcr.am/en/p/submit-cash-register, step 19).
@@ -157,9 +136,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     await prisma.restaurant.update({
       where: { id },
       data: {
-        srcCertData: new Uint8Array(certPemBuffer),
+        srcCertData: new Uint8Array(pfxBuffer),
         srcCertPath: null,
-        srcCertPassword: "",
+        srcCertPassword: encryptedPassword,
         srcConfiguredAt: new Date(),
         srcOnboardingStep: 5,
         ...(crnToStore && !currentRestaurant?.crn ? { crn: crnToStore } : {}),
@@ -172,8 +151,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       success: true,
       crnFromFilename,
       message: crnFromFilename
-        ? `Signed .crt stored (cert PEM mode). CRN ${crnFromFilename} extracted from filename.`
-        : "Signed .crt stored (cert PEM mode). Test the connection in the next step.",
+        ? `Signed .crt converted to .p12 and stored. CRN ${crnFromFilename} extracted from filename.`
+        : "Signed .crt converted to .p12 and stored. Test the connection in the next step.",
     });
   } catch (err) {
     if (err instanceof NextResponse) return err;

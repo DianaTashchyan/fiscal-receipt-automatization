@@ -57,9 +57,8 @@ export class RealSrcClient implements ISrcClient {
     }
 
     this.agent = new https.Agent({
-      ...(this.cfg.cert
-        ? { cert: this.cfg.cert, key: this.cfg.key }
-        : { pfx: this.cfg.pfx, passphrase: this.cfg.certPassword }),
+      pfx: this.cfg.pfx,
+      passphrase: this.cfg.certPassword,
       ca,
       keepAlive: true,
       rejectUnauthorized: true,

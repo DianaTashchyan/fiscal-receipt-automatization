@@ -16,7 +16,6 @@
 import fs from "fs";
 import { SrcConfigError } from "./errors";
 import { decryptCertPassword } from "./cert-crypto";
-import { decryptPrivateKey } from "./csr";
 
 export type SrcMode = "mock" | "src_real";
 
@@ -79,10 +78,8 @@ export function readSrcEnv() {
 // ============================================================
 
 export type RealCertConfig = {
-  pfx?: Buffer;           // PKCS#12 binary (legacy PFX mode)
-  certPassword?: string;  // decrypted PKCS#12 passphrase (legacy PFX mode)
-  cert?: Buffer;          // cert PEM buffer (cert+key mode)
-  key?: Buffer;           // private key PEM buffer (cert+key mode)
+  pfx: Buffer;            // PKCS#12 binary, ready to pass to https.Agent
+  certPassword: string;   // decrypted passphrase for the PKCS#12 bundle
   caCertPath: string | null;
   baseUrl: string;
   language: "hy" | "en" | "ru";
@@ -169,33 +166,6 @@ export function resolveRestaurantCertConfig(
   const baseUrl = env.baseUrl;
   const language = env.language;
   const caCertPath = env.caCertPath;
-
-  // 0. PEM mode: srcCertData holds cert PEM (starts with "-----BEGIN").
-  //    Private key stays encrypted in srcPrivateKeyEnc.
-  //    Avoids PKCS#12 entirely — node-forge's toPkcs12Asn1 hardcodes SHA-1
-  //    for the outer MAC, which OpenSSL 3.5+ rejects at security level 2.
-  if (
-    restaurant.srcCertData &&
-    restaurant.srcPrivateKeyEnc &&
-    Buffer.from(restaurant.srcCertData).slice(0, 5).toString("ascii") === "-----"
-  ) {
-    let keyPem: string;
-    try {
-      keyPem = decryptPrivateKey(restaurant.srcPrivateKeyEnc);
-    } catch (e) {
-      throw new SrcConfigError(
-        `Failed to decrypt private key for restaurant ${restaurant.id}: ${(e as Error).message}`
-      );
-    }
-    return {
-      cert: Buffer.from(restaurant.srcCertData),
-      key: Buffer.from(keyPem, "utf8"),
-      caCertPath,
-      baseUrl,
-      language,
-      source: "db",
-    };
-  }
 
   // 1. Cert bytes stored directly in DB
   if (restaurant.srcCertData && restaurant.srcCertPassword) {
