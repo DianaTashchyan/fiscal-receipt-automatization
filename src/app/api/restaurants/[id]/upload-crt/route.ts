@@ -15,6 +15,7 @@
 //   in the restaurant record so post-cert-configure does not need to parse the cert body.
 
 import tls from "tls";
+import crypto from "crypto";
 import forge from "node-forge";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
@@ -24,6 +25,11 @@ import { invalidateRestaurantSrcClient } from "@/lib/src/client";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+function spkiFingerprint(publicKey: forge.pki.PublicKey): string {
+  const der = forge.asn1.toDer(forge.pki.publicKeyToAsn1(publicKey as forge.pki.rsa.PublicKey)).getBytes();
+  return crypto.createHash("sha256").update(Buffer.from(der, "binary")).digest("hex");
+}
+
 export async function POST(req: NextRequest, { params }: RouteContext) {
   try {
     const { id } = await params;
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
 
     const restaurant = await prisma.restaurant.findUnique({
       where: { id },
-      select: { id: true, tin: true, srcPrivateKeyEnc: true },
+      select: { id: true, tin: true, srcPrivateKeyEnc: true, srcCsrPem: true },
     });
 
     if (!restaurant) {
@@ -76,15 +82,28 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     // SHA-1 for the outer MAC; OpenSSL 3.5+ at security level 2 rejects any use
     // of SHA-1, causing "Unable to load certificate from PFX data" on Vercel.
     let certPem: string;
+    let certFingerprint: string;
+    let privKeyFingerprint: string;
     try {
       const cert = forge.pki.certificateFromPem(crtPem);
-      forge.pki.privateKeyFromPem(privateKeyPem); // validate key is parseable
+      const privKey = forge.pki.privateKeyFromPem(privateKeyPem) as forge.pki.rsa.PrivateKey;
       certPem = forge.pki.certificateToPem(cert); // re-encode to normalise
+      certFingerprint = spkiFingerprint(cert.publicKey);
+      privKeyFingerprint = spkiFingerprint(forge.pki.rsa.setPublicKey(privKey.n, privKey.e));
     } catch (e) {
       return NextResponse.json(
         { error: `Failed to parse .crt: ${(e as Error).message}. Ensure the .crt was signed for the CSR generated in step 2.` },
         { status: 422 }
       );
+    }
+
+    // Compute CSR fingerprint for diagnostics (srcCsrPem may be null if not yet generated)
+    let csrFingerprint: string | null = null;
+    if (restaurant.srcCsrPem) {
+      try {
+        const csr = forge.pki.certificationRequestFromPem(restaurant.srcCsrPem);
+        if (csr.publicKey) csrFingerprint = spkiFingerprint(csr.publicKey);
+      } catch { /* non-fatal */ }
     }
 
     const certPemBuffer = Buffer.from(certPem, "utf8");
@@ -97,7 +116,18 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       });
     } catch (e) {
       return NextResponse.json(
-        { error: `Certificate/key validation failed: ${(e as Error).message}` },
+        {
+          error: `Certificate/key validation failed: ${(e as Error).message}`,
+          fingerprints: {
+            CERT:        certFingerprint,
+            CSR:         csrFingerprint ?? "unavailable (srcCsrPem is null)",
+            PRIVATE_KEY: privKeyFingerprint,
+          },
+          matches: {
+            "CERT == CSR":         csrFingerprint !== null && certFingerprint === csrFingerprint,
+            "CERT == PRIVATE_KEY": certFingerprint === privKeyFingerprint,
+          },
+        },
         { status: 422 }
       );
     }
