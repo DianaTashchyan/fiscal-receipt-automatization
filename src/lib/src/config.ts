@@ -78,8 +78,12 @@ export function readSrcEnv() {
 // ============================================================
 
 export type RealCertConfig = {
-  pfx: Buffer;            // PKCS#12 binary, ready to pass to https.Agent
-  certPassword: string;   // decrypted passphrase for the PKCS#12 bundle
+  // PEM mode (preferred): cert + key PEM strings, no password needed
+  cert?: string;
+  key?: string;
+  // PKCS#12 mode (legacy/env fallback): binary bundle + passphrase
+  pfx?: Buffer;
+  certPassword?: string;
   caCertPath: string | null;
   baseUrl: string;
   language: "hy" | "en" | "ru";
@@ -149,13 +153,19 @@ export type RestaurantCertFields = {
   srcPrivateKeyEnc?: string | null;
 };
 
+/** Returns true when srcCertData contains a PEM cert (starts with "-----"). */
+function isPemBytes(data: Uint8Array): boolean {
+  return data.length > 5 && data[0] === 0x2D && data[1] === 0x2D;
+}
+
 /**
  * Resolve the cert config for a specific restaurant.
  *
  * Priority:
- *   1. Restaurant.srcCertData (bytes in DB) + srcCertPassword (encrypted) — preferred
- *   2. Restaurant.srcCertPath (file path in DB) + srcCertPassword (encrypted)
- *   3. Global env cert (SRC_CERT_PATH / SRC_CERT_PASSWORD) — fallback
+ *   1. Restaurant.srcCertData (PEM bytes) + srcPrivateKeyEnc — PEM mode (preferred)
+ *   2. Restaurant.srcCertData (PKCS#12 bytes) + srcCertPassword — legacy PKCS#12 mode
+ *   3. Restaurant.srcCertPath (file path) + srcCertPassword — file-based PKCS#12
+ *   4. Global env cert (SRC_CERT_PATH / SRC_CERT_PASSWORD) — fallback
  *
  * Throws SrcConfigError if real mode is active and no cert is available.
  */
@@ -167,7 +177,29 @@ export function resolveRestaurantCertConfig(
   const language = env.language;
   const caCertPath = env.caCertPath;
 
-  // 1. Cert bytes stored directly in DB
+  // 1. PEM mode: srcCertData holds cert PEM bytes; private key in srcPrivateKeyEnc
+  if (restaurant.srcCertData && isPemBytes(restaurant.srcCertData) && restaurant.srcPrivateKeyEnc) {
+    const certPem = Buffer.from(restaurant.srcCertData).toString("utf8");
+    let privateKeyPem: string;
+    try {
+      privateKeyPem = decryptCertPassword(restaurant.srcPrivateKeyEnc);
+    } catch (e) {
+      throw new SrcConfigError(
+        `Failed to decrypt private key for restaurant ${restaurant.id} — ` +
+          `check that CERT_ENCRYPTION_KEY has not changed. Error: ${(e as Error).message}`
+      );
+    }
+    return {
+      cert: certPem,
+      key: privateKeyPem,
+      caCertPath,
+      baseUrl,
+      language,
+      source: "db",
+    };
+  }
+
+  // 2. Legacy PKCS#12 mode: srcCertData holds binary PKCS#12 + srcCertPassword
   if (restaurant.srcCertData && restaurant.srcCertPassword) {
     let certPassword: string;
     try {
@@ -189,7 +221,7 @@ export function resolveRestaurantCertConfig(
     };
   }
 
-  // 2. File path stored in DB
+  // 3. File path stored in DB
   if (restaurant.srcCertPath && restaurant.srcCertPassword) {
     let pfx: Buffer;
     try {
@@ -218,7 +250,7 @@ export function resolveRestaurantCertConfig(
     };
   }
 
-  // 3. Fall back to global env cert
+  // 4. Fall back to global env cert
   return getRealCertConfig();
 }
 

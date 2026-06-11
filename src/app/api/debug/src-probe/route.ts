@@ -91,9 +91,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(report, { status: 200 });
   }
 
-  // ── 3. tls.createSecureContext — exactly what RealSrcClient hits lazily ──────
+  // ── 3. tls.createSecureContext — eager test of whichever mode is active ──────
   try {
-    tls.createSecureContext({ pfx: certConfig.pfx, passphrase: certConfig.certPassword });
+    if (certConfig.cert && certConfig.key) {
+      tls.createSecureContext({ cert: certConfig.cert, key: certConfig.key });
+      report.certMode = "pem";
+    } else {
+      tls.createSecureContext({ pfx: certConfig.pfx, passphrase: certConfig.certPassword });
+      report.certMode = "pkcs12";
+    }
     report.tlsCreateSecureContext = "OK";
   } catch (e) {
     const err = e as NodeJS.ErrnoException;

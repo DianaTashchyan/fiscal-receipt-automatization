@@ -1,9 +1,7 @@
 // POST /api/restaurants/:id/upload-crt
 // Accepts a signed .crt (base64) from SRC, combines it server-side with the
-// encrypted private key stored from the CSR generation step, converts to PKCS#12,
-// and stores the resulting .p12 — all without ever exposing the private key to
-// the browser. The .p12 bundle password is generated server-side; the caller
-// does not need to supply or store it.
+// encrypted private key stored from the CSR generation step, and stores the
+// certificate PEM directly — without ever exposing the private key to the browser.
 //
 // Body: { crtBase64: string, filename?: string }
 //
@@ -14,14 +12,11 @@
 //   If a filename matching this pattern is provided, the CRN is extracted and stored
 //   in the restaurant record so post-cert-configure does not need to parse the cert body.
 
-import https from "https";
-import forge from "node-forge";
-import { randomBytes } from "crypto";
+import tls from "tls";
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma/client";
 import { requireRestaurantAccess } from "@/lib/utils/auth";
 import { decryptPrivateKey } from "@/lib/src/csr";
-import { encryptCertPassword } from "@/lib/src/cert-crypto";
 import { invalidateRestaurantSrcClient } from "@/lib/src/client";
 
 type RouteContext = { params: Promise<{ id: string }> };
@@ -53,9 +48,6 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "crtBase64 is required" }, { status: 400 });
     }
 
-    // Generate a secure random password server-side; caller never needs to know it.
-    const p12Password = randomBytes(32).toString("hex");
-
     // Decode the .crt
     let crtPem: string;
     try {
@@ -76,40 +68,17 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       );
     }
 
-    // Parse the .crt and private key, build PKCS#12
-    let pfxDer: string;
+    // Validate cert + key using the exact same call that happens at connection time.
+    // tls.createSecureContext throws immediately on invalid PEM, key/cert mismatch,
+    // or any format the current OpenSSL rejects — unlike https.Agent which is lazy.
     try {
-      const cert = forge.pki.certificateFromPem(crtPem);
-      const privateKey = forge.pki.privateKeyFromPem(privateKeyPem);
-      const p12 = forge.pkcs12.toPkcs12Asn1(privateKey, [cert], p12Password, {
-        algorithm: "aes256",
-        friendlyName: restaurant.tin,
-      });
-      pfxDer = forge.asn1.toDer(p12).getBytes();
+      tls.createSecureContext({ cert: crtPem, key: privateKeyPem });
     } catch (e) {
       return NextResponse.json(
-        { error: `Failed to convert .crt to .p12: ${(e as Error).message}. Ensure the .crt was signed for the CSR generated in step 2.` },
+        { error: `Certificate validation failed: ${(e as Error).message}. Ensure the certificate was signed for the CSR generated in step 2.` },
         { status: 422 }
       );
     }
-
-    const pfxBuffer = Buffer.from(pfxDer, "binary");
-
-    // Validate the resulting .p12 by building an https.Agent
-    try {
-      new https.Agent({
-        pfx: pfxBuffer,
-        passphrase: p12Password,
-        rejectUnauthorized: false,
-      });
-    } catch (e) {
-      return NextResponse.json(
-        { error: `Generated .p12 validation failed: ${(e as Error).message}` },
-        { status: 422 }
-      );
-    }
-
-    const encryptedPassword = encryptCertPassword(p12Password);
 
     // Extract CRN from filename: SRC names the signed cert "{TIN}_{CRN}.crt"
     // (documented in VCR guide: vcr.am/en/p/submit-cash-register, step 19).
@@ -136,9 +105,9 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
     await prisma.restaurant.update({
       where: { id },
       data: {
-        srcCertData: new Uint8Array(pfxBuffer),
+        srcCertData: new Uint8Array(Buffer.from(crtPem, "utf8")),
+        srcCertPassword: null,
         srcCertPath: null,
-        srcCertPassword: encryptedPassword,
         srcConfiguredAt: new Date(),
         srcOnboardingStep: 5,
         ...(crnToStore && !currentRestaurant?.crn ? { crn: crnToStore } : {}),
@@ -151,8 +120,8 @@ export async function POST(req: NextRequest, { params }: RouteContext) {
       success: true,
       crnFromFilename,
       message: crnFromFilename
-        ? `Signed .crt converted to .p12 and stored. CRN ${crnFromFilename} extracted from filename.`
-        : "Signed .crt converted to .p12 and stored. Test the connection in the next step.",
+        ? `Certificate stored. CRN ${crnFromFilename} extracted from filename.`
+        : "Certificate stored. Test the connection in the next step.",
     });
   } catch (err) {
     if (err instanceof NextResponse) return err;

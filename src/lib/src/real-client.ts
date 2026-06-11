@@ -56,13 +56,23 @@ export class RealSrcClient implements ISrcClient {
       }
     }
 
-    this.agent = new https.Agent({
-      pfx: this.cfg.pfx,
-      passphrase: this.cfg.certPassword,
-      ca,
-      keepAlive: true,
-      rejectUnauthorized: true,
-    });
+    if (this.cfg.cert && this.cfg.key) {
+      this.agent = new https.Agent({
+        cert: this.cfg.cert,
+        key: this.cfg.key,
+        ca,
+        keepAlive: true,
+        rejectUnauthorized: true,
+      });
+    } else {
+      this.agent = new https.Agent({
+        pfx: this.cfg.pfx,
+        passphrase: this.cfg.certPassword,
+        ca,
+        keepAlive: true,
+        rejectUnauthorized: true,
+      });
+    }
   }
 
   private async post<T>(
